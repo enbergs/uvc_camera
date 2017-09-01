@@ -45,8 +45,8 @@ int utc_time(char *result, int result_size);
 
 unsigned int width = 1280, height = 960, frame_index = 0, fps = 30;
 
-bool debug = false, run = true, autoexposure = false, output_timestamp = false;
-bool formatted_output = false, gps = false;
+static bool debug_mode = false;
+bool run = true;
 
 /* when we hit ^C tell main loop to exit */
 static void stop (int sig) { run = false; }
@@ -105,11 +105,15 @@ int main(int argc, char **argv) {
 	bool calibrate = false, display = false, verbose = false;
 	Mat camera_matrix, dist_coeffs;
 
+    width = 1920; height = 1080;
+
 /* jsv need to implement */
 	int n_output_buffers = 3;
+    fps = 30;
+    device = 0;
 
 	for(i=1;i<argc;++i) {
-		if(strcmp(argv[i], "-debug") == 0) debug = true;
+		if(strcmp(argv[i], "-debug") == 0) debug_mode = true;
 		else if(strcmp(argv[i], "-verbose") == 0) verbose = true;
 		else if(strcmp(argv[i], "-device") == 0) device = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-d") == 0) device = atoi(argv[++i]);
@@ -117,17 +121,13 @@ int main(int argc, char **argv) {
 		else if(strcmp(argv[i], "-width") == 0) width = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-c") == 0) cfile = argv[++i];
 		else if(strcmp(argv[i], "--calibrate") == 0) cfile = argv[++i];
-		else if(strcmp(argv[i], "-timestamp") == 0) output_timestamp = true; 
 		else if(strcmp(argv[i], "--fourcc") == 0) fourcc = argv[++i];
 		else if(strcmp(argv[i], "-o") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "--output") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "-display") == 0) display = true; 
 		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-fps") == 0) fps = atoi(argv[++i]);
-		else if(strcmp(argv[i], "-autoexposure") == 0) autoexposure = true; 
-		else if(strcmp(argv[i], "-formatted") == 0) formatted_output = true; 
-		else if(strcmp(argv[i], "-mjpg") == 0) fourcc = "MJPG"; 
-		else if(strcmp(argv[i], "-gps") == 0) gps = true; 
+		else if(strcmp(argv[i], "-mjpg") == 0) fourcc = "MJPG";
 		else if(strcmp(argv[i], "-jpg") == 0) {
 			compression_scheme = Camera::COMPRESSION_JPEG;
 			compression_quality = atoi(argv[++i]);
@@ -206,14 +206,14 @@ int main(int argc, char **argv) {
 			usleep(10000);
 			incoming_buffer = camera->get_incoming_buffer();
 		}
-if(debug) printf("main loop: got incoming buffer [%p]\n", incoming_buffer);
+if(debug_mode) printf("main loop: got incoming buffer [%p]\n", incoming_buffer);
 		
 		void *outgoing_buffer = camera->get_outgoing_buffer();
 		while(outgoing_buffer == 0) {
 			usleep(10000); /* we shouldn't have to wait here if things go well */
 			outgoing_buffer = camera->get_outgoing_buffer();
 		}
-if(debug) printf("main loop: got outgoing buffer [%p]\n", outgoing_buffer);
+if(debug_mode) printf("main loop: got outgoing buffer [%p]\n", outgoing_buffer);
 
 		int isize = camera->get_incoming_buffer_length();
 		int osize = camera->get_outgoing_buffer_size(); 
@@ -254,10 +254,9 @@ if(debug) printf("main loop: got outgoing buffer [%p]\n", outgoing_buffer);
 		// camera->release_outgoing_buffer(nwrite);
 		// camera->release_incoming_buffer();
 		
-		dtime = time(0) - time0;
 		++nframes;
 		dtime = time(0) - time0;
-		if(nframes && (nframes % 300) == 0) {
+		if(nframes && ((nframes % 300) == 0) && (dtime > 0)) {
 			snprintf(logbuff, logbuff_length, "%d frames in %d seconds. fps = %d", nframes, dtime, nframes / dtime);
 			logger(LEVEL_INFO, logbuff);
 		}

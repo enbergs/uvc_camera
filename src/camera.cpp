@@ -36,6 +36,8 @@ using namespace cv;
 using namespace std;
 
 /* Versions */
+#define FWVERSION "0.0"
+#define GITHASH "hasheesh"
 static char version[] = FWVERSION;
 static char githash[] = GITHASH;
 
@@ -145,7 +147,8 @@ bool Camera::init() {
 	switch(type) {
 	case CAMERA_LI_USB3_MT9M021C:
 	case CAMERA_LI_USB3_MT9M021M: 
-	case CAMERA_LI_USB3_OV10635: 
+	case CAMERA_LI_USB3_OV10635:
+    case CAMERA_LI_USB3_AR023Z:
 		bytes_per_pixel = 2;
 		frame_size = height * width * bytes_per_pixel; /* number of bytes */
 		break;
@@ -630,7 +633,7 @@ Camera::~Camera() {
 	if(tid) delete [] tid;
 }
 
-bool debug = false, autoexposure = false, output_timestamp = false;
+bool debug_mode = false;
 
 extern bool run;
 bool pause_ops = false;
@@ -1157,8 +1160,11 @@ bool Camera::print_caps() {
 			is_color = true;
 			type = CAMERA_LI_USB3_OV10635;
 		} else if(strcmp((char *)cap.card, "See3CAMCU50") == 0) {
-			is_color = true;
-			type = CAMERA_ECON_SEE3CAMCU50;
+            is_color = true;
+            type = CAMERA_ECON_SEE3CAMCU50;
+        } else if(strcmp((char *)cap.card, "AR023ZWDR") == 0) {
+            is_color = true;
+            type = CAMERA_LI_USB3_AR023Z;
 		} else {
 			snprintf(logbuff, logbuff_length, "unknown camera detected");
 			if(log_fxn) (*log_fxn)(LEVEL_INFO, logbuff);
@@ -1336,7 +1342,7 @@ void *stream_from_camera(void *ptr) {
 			continue;
 		}
 
-if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
+if(debug_mode) printf("stream_from_camera(): waiting for frame to be ready\n");
 
 		if(pause_ops) {
 			if(log_fxn) {
@@ -1368,7 +1374,7 @@ if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
 			break;
 		}
 
-		if(debug && log_fxn) {
+		if(debug_mode && log_fxn) {
 			snprintf(logbuff, logbuff_length, "stream_from_camera(): about to dequeue buffer");
 			(*log_fxn)(Camera::LEVEL_DEBUG, logbuff);
 		}
@@ -1400,7 +1406,7 @@ if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
 			continue;
 		}
 
-		if(debug && log_fxn) {
+		if(debug_mode && log_fxn) {
 			snprintf(logbuff, logbuff_length,
 				"stream_from_camera(): captured image index = %d. length=%d\n", buf.index, buf.length);
 			(*log_fxn)(Camera::LEVEL_DEBUG, logbuff);
@@ -1454,7 +1460,7 @@ if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
 		frame_capture_timestamp[index] = frame_capture_time;
 		frame_capture_index[index] = buf.sequence;
 
-		if(debug && log_fxn) {
+		if(debug_mode && log_fxn) {
 			snprintf(logbuff, logbuff_length, "stream_from_camera(TYPE=%d): preprocess image", type);
 			(*log_fxn)(Camera::LEVEL_DEBUG, logbuff);
 		}
@@ -1539,7 +1545,7 @@ if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
 
 		}
 
-		if(debug && log_fxn) {
+		if(debug_mode && log_fxn) {
 			snprintf(logbuff, logbuff_length, 
 				"stream_from_camera(): incoming: marking buffer %d / %d as full", index, n_buffers);
 			(*log_fxn)(Camera::LEVEL_DEBUG, logbuff);
@@ -1556,7 +1562,7 @@ if(debug) printf("stream_from_camera(): waiting for frame to be ready\n");
 		}
 
 	/* return the capture buffer back so kernel can capture camera data into it */
-		if(debug && log_fxn) {
+		if(debug_mode && log_fxn) {
 			snprintf(logbuff, logbuff_length, 
 				"stream_from_camera(): capture buffer %d returned to pool", capture_index);
 			(*log_fxn)(Camera::LEVEL_DEBUG, logbuff);
