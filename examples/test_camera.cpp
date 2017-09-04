@@ -107,6 +107,8 @@ int main(int argc, char **argv) {
 
     width = 1920; height = 1080;
 
+	width = 1280; height = 960;
+
 /* jsv need to implement */
 	int n_output_buffers = 3;
     fps = 30;

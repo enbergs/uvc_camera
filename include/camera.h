@@ -213,11 +213,12 @@ class Camera {
 	char fourcc[4];
 	int coarse_integration, gain;
 	bool calibrate, display, verbose;
-	int fd, type, height, width, fps, frame_size, bytes_per_pixel;
+	int fd, type, fps, frame_size, bytes_per_pixel;
 	int incoming_index, outgoing_index, osize, isize;
 	// int fill_index, capture_index;
 	bool is_color;
 	unsigned char *temp_buffer;
+    uint32_t width, height;
 
 /* for streaming data from camera */
 	unsigned int incoming_streamer_cpu_mask;
@@ -233,7 +234,8 @@ class Camera {
 	int *outgoing_buffer_size, *incoming_buffer_size;
 	int *outgoing_buffer_length, *incoming_buffer_length;
 	char *logbuff, *disk_streamer_logbuff, *camera_streamer_logbuff;
-	int logbuff_length, disk_streamer_logbuff_length, camera_streamer_logbuff_length;
+	int disk_streamer_logbuff_length, camera_streamer_logbuff_length;
+	size_t logbuff_length;
 
 	int n_outgoing_buffers, n_incoming_buffers;
 

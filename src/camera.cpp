@@ -58,6 +58,7 @@ bool Camera::set_output_file(const char *filename) {
 	int len = strlen(filename);
 	ofile = new char [ len + 1 ];
 	sprintf(ofile, "%s", filename);
+	return true;
 }
 
 bool Camera::configure_output_streaming(int n_buffers, int size, unsigned int cpu_mask) {
@@ -79,6 +80,7 @@ bool Camera::register_callback(CameraCallbackFxn *fxn, void *ext) {
 	params.fxn = fxn;
 	params.ext = ext;
 	callback_params.push_back(params);
+	return true;
 };
 
 bool Camera::set_compression(int scheme, std::vector<int> const &params) {
@@ -90,11 +92,9 @@ bool Camera::set_compression(int scheme, std::vector<int> const &params) {
 	return false;
 };
 
-/* at this point: height, width and pixel size are known.
-   init() initializes all the buffers and camera parameters, but does not "start" the streaming.
-   the user must call start_capture() and stop_capture() to start and stop streaming from camera
-   the complement of this function is close() which should be called when the camera will no
-   longer be used */
+/* at this point: height, width and pixel size are known. init() initializes all buffers and camera parameters.
+ * user must call start_capture() and stop_capture() to start and stop streaming from camera.
+   complement of this function is close() which should be called when camera will no longer be used */
 bool Camera::init() {
 
 /* set the desired parameters */
@@ -123,10 +123,12 @@ bool Camera::init() {
 		return false;
 	}
 
-	if((width != fmt.fmt.pix.width) || (height != fmt.fmt.pix.height)) {
+	uint32_t actual_image_w = fmt.fmt.pix.width; // reinterpret_cast<uint32_t>(fmt.fmt.pix.width);
+	uint32_t actual_image_h = fmt.fmt.pix.height; // reinterpret_cast<uint32_t>(fmt.fmt.pix.height);
+	if((width != actual_image_w) || (height != actual_image_h)) {
 		snprintf(logbuff, logbuff_length,
 			"start_capture(): requested WxH = %dx%d. granted %dx%d",
-			width, height, fmt.fmt.pix.width, fmt.fmt.pix.height);
+			width, height, actual_image_w, actual_image_h);
 		if(log_fxn) (*log_fxn)(LEVEL_WARNING, logbuff);
 	} else {
 		snprintf(logbuff, logbuff_length, "start_capture(): WxH = %dx%d", width, height);
@@ -564,8 +566,6 @@ Camera::Camera(int device, int width, int height, CameraLogFxn *log_fxn, int use
 
 	tid = new pthread_t [ NThreadIds ];
 
-	tid = new pthread_t [ NThreadIds ];
-
 	memset(&disk_streamer_params, 0, sizeof(DiskStreamerParams));
 
 	sleep_wait = INCOMING_BUFFER_DEFAULT_SLEEP_WAIT; /* idle time waiting for buffer to free up */
@@ -641,32 +641,6 @@ static void stop(int sig) { run = false; } /* when we hit ^C tell main loop to e
 static void set_pause(int sig) { pause_ops = true; }
 static void clr_pause(int sig) { pause_ops = false; }
 
-enum {
-	VIDEO_INFO,
-	FRAME_INFO,
-	GPS_INFO
-};
-
-typedef struct _VideoInfo {
-	int structure_type, structure_length, payload_length;
-	long long unsigned int time_stamp;
-	int frame_height, frame_width, pixel_bits, frame_size;
-	float rate;
-} VideoInfo;
-
-typedef struct _FrameInfo {
-	int structure_type, structure_length, payload_length;
-	long long unsigned int time_stamp;
-	int height, width, pixel_bits, size, index;
-	float rate;
-} FrameInfo;
-
-typedef struct _GPSInfo {
-	int structure_type, structure_length;
-	long long unsigned int time_stamp;
-	double lat, lon;
-} GPSInfo;
-
 #if 0
 long long unsigned int get_time_stamp() {
 	long long unsigned int result = time(0);
@@ -690,11 +664,6 @@ printf("xioctl(fd=%d, request=%d, arg=%p) [return]\n", fd, request, arg);
 	while (r == -1 && EINTR == errno);
 	return r;
 #endif
-}
-
-GPSInfo get_gps_info() {
-	GPSInfo result = { GPS_INFO, sizeof(GPSInfo) };
-	return result;
 }
 
 /* note: one should preallocate a large vector for ovec so that resizing won't happen */
@@ -767,6 +736,8 @@ bool Camera::compress_frame(unsigned char *ibuff, std::vector<uchar> &obuff) {
 	return true;
 }
 
+#if 0
+
 /* note: this function doesn't return until the run flag is cleared. 
    its sole job is to stream buffers and data to disk.
    the semaphore is set by the data acquisition, and cleared by stream_to_disk() once written to disk.
@@ -806,8 +777,6 @@ void *stream_to_disk(void *ptr) {
 	unsigned int *semaphore = params->semaphore;
 	unsigned char **buffers = params->buffers;
 	int *bufflen = params->bufflen;
-
-	int cur_filesize = 0, file_index = 0; /* cumulative file size */
 
 	while(params->run && run) {
 
@@ -862,6 +831,8 @@ grand_finale:
 
 	return 0;
 }
+
+#endif
 
 static void convert_border_bayer16_line_to_bgr24(unsigned short int *bayer, unsigned short int *adjacent_bayer,
 	unsigned char *bgr, int width, int shift, bool start_with_green, bool blue_line) {
@@ -1421,19 +1392,6 @@ if(debug_mode) printf("stream_from_camera(): waiting for frame to be ready\n");
 				(*log_fxn)(Camera::LEVEL_INFO, logbuff);
 			}
 		}
-#endif
-
-#if 0
-		if(buffer_flags & V4L2_BUF_FLAG_TIMESTAMP_MASK) { /* prints out timestamp and index for each frame */
-			snprintf(logbuff, logbuff_length,
-				"timestamp = %lx %ld.%6.6ld", buffer_flags, buf.timestamp.tv_sec, buf.timestamp.tv_usec);
-			(*log_fxn)(Camera::LEVEL_INFO, logbuff);
-		}
-#endif
-
-#if 0
-		snprintf(logbuff, logbuff_length, "Image Length: %d", buf.bytesused);
-		if(log_fxn) (*log_fxn)(LEVEL_INFO, logbuff);
 #endif
 
 #if 0
