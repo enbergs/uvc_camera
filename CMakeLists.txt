@@ -11,7 +11,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wextra -Wall -std=c++11 -pthread -m64 -
 
 include_directories(${PROJECT_ROOT}/include)
 
-set(SOURCE_FILES src/camera.cpp src/colorspaces.cpp src/uvc_camera.c)
+set(SOURCE_FILES src/camera.cpp src/colorspaces.cpp src/uvc_camera.cpp)
 
 add_executable(test_camera examples/test_camera.cpp ${SOURCE_FILES})
 # target_link_libraries(test_camera ${OpenCV_LIBS})

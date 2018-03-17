@@ -29,7 +29,7 @@ typedef struct {
     unsigned char **capture_buffer;
     size_t *capture_length;
     unsigned char **user_buffer;
-    unsigned size_t *user_buffer_length;
+    size_t *user_buffer_length;
     unsigned int *user_buffer_status;
 
     int setup(const char *device_id, uint32_t width, uint32_t height);

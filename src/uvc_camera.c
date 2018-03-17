@@ -115,8 +115,8 @@ int initUvcCamera(UvcCamera *camera, int n_capture_buffers, int n_user_buffers) 
     if(camera->log_fxn) (*camera->log_fxn)(LEVEL_INFO, log_buff);
     camera->n_capture_buffers = req.count;
 
-    camera->capture_buffer = malloc(camera->n_capture_buffers * sizeof(unsigned char *));
-    camera->capture_length = malloc(camera->n_capture_buffers * sizeof(size_t));
+    camera->capture_buffer = (unsigned char **) malloc(camera->n_capture_buffers * sizeof(unsigned char *));
+    camera->capture_length = (size_t *) malloc(camera->n_capture_buffers * sizeof(size_t));
 
     if(req.type != requested_type) {
         snprintf(log_buff, sizeof(log_buff),
@@ -140,7 +140,7 @@ int initUvcCamera(UvcCamera *camera, int n_capture_buffers, int n_user_buffers) 
         snprintf(log_buff, sizeof(log_buff), "init_mmap(): mmap(length=%d, offset=%d)", buf.length, buf.m.offset);
         if(camera->log_fxn) (*camera->log_fxn)(LEVEL_INFO, log_buff);
         camera->capture_length[i] = buf.length;
-        camera->capture_buffer[i] = (unsigned char *)mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
+        camera->capture_buffer[i] = (unsigned char *)mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, camera->fd, buf.m.offset);
         if(camera->capture_buffer[i] == MAP_FAILED) {
             if(camera->log_fxn) (*camera->log_fxn)(LEVEL_FATAL, "mmap operation failed"); /* TODO what now? */
         }
@@ -172,29 +172,39 @@ int initUvcCamera(UvcCamera *camera, int n_capture_buffers, int n_user_buffers) 
     int i, err, time0;
     pthread_t thread;
     unsigned int cpu_mask;
+    size_t frame_size = camera->width * camera->height * 4; /* accommodate BGRA */
 
 /* configure incoming = camera streamer */
 
-    camera->user_buffer = malloc(n_user_buffers * )
-
-        new unsigned char * [ n_incoming_buffers ];
-    incoming_buffer_semaphore = new unsigned int [ n_incoming_buffers ];
-    incoming_buffer_length = new int [ n_incoming_buffers ];
-    incoming_buffer_size = new int [ n_incoming_buffers ];
-    frame_capture_timestamp = new uint64_t [ n_incoming_buffers ];
-    frame_capture_index = new int [ n_incoming_buffers ];
-
-    if(isize == 0) {
-        isize = width * height * bytes_per_pixel; /* jsv. actually need to sync this with driver buffer size */
-        isize = width * height * 4; /* jsv. this needs to accomodate BGR */
+    camera->user_buffer_length = (size_t *) malloc(n_user_buffers * sizeof(size_t));
+    camera->user_buffer_status = (unsigned int *) malloc(n_user_buffers * sizeof(int));
+    camera->user_buffer = (unsigned char **) malloc(n_user_buffers);
+    for (int i = 0; i < n_user_buffers; ++i) {
+        camera->user_buffer[i] = (unsigned char *) malloc(frame_size);
+        camera->user_buffer_status[i] = 0;
+        camera->user_buffer_length[i] = frame_size;
     }
 
-    for(int i=0;i<n_incoming_buffers;++i) {
-        incoming_buffer[i] = new unsigned char [ isize ];
-        incoming_buffer_semaphore[i] = BUFFER_EMPTY;
-        incoming_buffer_length[i] = 0;
-        incoming_buffer_size[i] = isize;
-    }
+//    new unsigned char * [ n_incoming_buffers ];
+//    incoming_buffer_semaphore = new unsigned int [ n_incoming_buffers ];
+//    incoming_buffer_length = new int [ n_incoming_buffers ];
+//    incoming_buffer_size = new int [ n_incoming_buffers ];
+//    frame_capture_timestamp = new uint64_t [ n_incoming_buffers ];
+//    frame_capture_index = new int [ n_incoming_buffers ];
+
+//    if(isize == 0) {
+//        isize = width * height * bytes_per_pixel; /* jsv. actually need to sync this with driver buffer size */
+//        isize = width * height * 4; /* jsv. this needs to accomodate BGR */
+//    }
+
+//    for(int i=0;i<n_incoming_buffers;++i) {
+//        incoming_buffer[i] = new unsigned char [ isize ];
+//        incoming_buffer_semaphore[i] = BUFFER_EMPTY;
+//        incoming_buffer_length[i] = 0;
+//        incoming_buffer_size[i] = isize;
+//    }
+
+#if 0
 
 /* camera streaming thread always needs to run, even if to /dev/null. it recycles buffers */
     camera_streamer_params.camera = this;
@@ -262,6 +272,9 @@ int initUvcCamera(UvcCamera *camera, int n_capture_buffers, int n_user_buffers) 
 
 /* do we want to record video? */
     writer = 0;
+
+#endif
+
 #if 0
     if(ofile && (raw_output == false)) {
 		char ch0 = fourcc[0];
