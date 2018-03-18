@@ -31,7 +31,7 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
 
-#include <camera.h>
+#include <uvc_camera.h>
 
 using namespace cv;
 using namespace std;
@@ -50,6 +50,8 @@ bool run = true;
 
 /* when we hit ^C tell main loop to exit */
 static void stop (int sig) { run = false; }
+
+#if 0
 
 #define GAMMA_LUT_SIZE 4096
 typedef struct {
@@ -89,10 +91,12 @@ bool display_fxn(Camera *camera, unsigned char *data_ptr, void *ext) {
 	}
 }
 
-bool logger(int level, const char *str) {
+#endif
+
+int logger(int level, const char *str, int len) {
 	int cur_time = time(0);
 	printf("LOG: TIME=%d LEVEL=%d. MESSAGE=[%s]\n", cur_time, level, str);
-	return true;
+	return 0;
 }
 
 int main(int argc, char **argv) {
@@ -100,13 +104,12 @@ int main(int argc, char **argv) {
 	char str[1024];
 	char logbuff[1024];
 	int logbuff_length = sizeof(logbuff);
-	int i, nframes = 0, device = -1, compression_scheme = Camera::COMPRESSION_NONE, compression_quality = 0;
+	int i, nframes = 0, device = -1, compression_scheme = UvcCamera::COMPRESSION_NONE, compression_quality = 0;
 	std::string cfile, ofile, gfile = "gps.log", fourcc = "";
 	bool calibrate = false, display = false, verbose = false;
 	Mat camera_matrix, dist_coeffs;
 
     width = 1920; height = 1080;
-
 	width = 1280; height = 960;
 
 /* jsv need to implement */
@@ -117,21 +120,23 @@ int main(int argc, char **argv) {
 	for(i=1;i<argc;++i) {
 		if(strcmp(argv[i], "-debug") == 0) debug_mode = true;
 		else if(strcmp(argv[i], "-verbose") == 0) verbose = true;
-		else if(strcmp(argv[i], "-device") == 0) device = atoi(argv[++i]);
+		else if(strcmp(argv[i], "--device") == 0) device = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-d") == 0) device = atoi(argv[++i]);
-		else if(strcmp(argv[i], "-height") == 0) height = atoi(argv[++i]);
-		else if(strcmp(argv[i], "-width") == 0) width = atoi(argv[++i]);
+		else if(strcmp(argv[i], "--height") == 0) height = atoi(argv[++i]);
+		else if(strcmp(argv[i], "-h") == 0) height = atoi(argv[++i]);
+		else if(strcmp(argv[i], "--width") == 0) width = atoi(argv[++i]);
+		else if(strcmp(argv[i], "-w") == 0) width = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-c") == 0) cfile = argv[++i];
 		else if(strcmp(argv[i], "--calibrate") == 0) cfile = argv[++i];
 		else if(strcmp(argv[i], "--fourcc") == 0) fourcc = argv[++i];
 		else if(strcmp(argv[i], "-o") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "--output") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "-display") == 0) display = true; 
-		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
+//		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-fps") == 0) fps = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-mjpg") == 0) fourcc = "MJPG";
 		else if(strcmp(argv[i], "-jpg") == 0) {
-			compression_scheme = Camera::COMPRESSION_JPEG;
+			compression_scheme = UvcCamera::COMPRESSION_JPEG;
 			compression_quality = atoi(argv[++i]);
 		}
 		else if(strcmp(argv[i], "-vga") == 0) {
@@ -140,13 +145,18 @@ int main(int argc, char **argv) {
 		} else if(strcmp(argv[i], "-vga2") == 0) {
 			width = 1280;
 			height = 960;
-		} 
+		} else if(strcmp(argv[i], "-hd") == 0) {
+			width = 1920;
+			height = 1080;
+		}
 	}
 
-	Camera *camera = new Camera(device, width, height, logger);
+	UvcCamera *camera = new UvcCamera(device, width, height, logger);
+	camera->init();
 
 	// this is also possible: camera->log_fxn = logger;
 
+#if 0
 	if(cfile.length()) {
 		if(verbose) printf("calibration file = [%s]\n", cfile.c_str());
 		FileStorage fs(cfile.c_str(), FileStorage::READ);
@@ -157,15 +167,14 @@ int main(int argc, char **argv) {
 		std::cout << dist_coeffs;
 		calibrate = true;
 	}
-
 	if(verbose) printf("allocating buffers for %dX%d resolution\n", width, height);
 	signal(SIGINT, stop); /* ^C  exception handling */ 
 
 /* any compression */
-	if(compression_scheme != Camera::COMPRESSION_NONE) {
+	if(compression_scheme != COMPRESSION_NONE) {
 		std::vector<int> params = std::vector<int>(1);
 		params[0] = compression_quality;
-		camera->set_compression(Camera::COMPRESSION_JPEG, params);
+		camera->set_compression(COMPRESSION_JPEG, params);
 		camera->set_fourcc(fourcc.c_str());
 		snprintf(logbuff, logbuff_length, "camera configured for compression scheme %d with quality %d",
 			compression_scheme, compression_quality);
@@ -273,6 +282,8 @@ if(debug_mode) printf("main loop: got outgoing buffer [%p]\n", outgoing_buffer);
 	if(camera->stop_capture()) return 1;
 
 	if(display_params) delete display_params;
+
+#endif
 
 	return 0;
 }
