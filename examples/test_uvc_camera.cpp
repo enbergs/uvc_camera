@@ -153,6 +153,21 @@ int main(int argc, char **argv) {
 
 	UvcCamera *camera = new UvcCamera(device, width, height, logger);
 	camera->init();
+	camera->frame_timeout_ms = 1000;
+	UvcCamera::FrameData frame_data;
+	uint32_t *bgr_frame = new uint32_t [camera->width * camera->height];
+
+	while (run) {
+		uint8_t *src;
+		const time_t frame_timeout_ms = 1000;
+		int uvc_frame_index = camera->getFrame(&frame_data);
+		if (uvc_frame_index >= 0) {
+			uyvy12ToArgb(frame_data.payload, bgr_frame, camera->width, camera->height);
+			camera->releaseFrame(frame_data.index);
+		} else if (uvc_frame_index < 0) {
+			printf("error\n");
+		}
+	}
 
 	// this is also possible: camera->log_fxn = logger;
 

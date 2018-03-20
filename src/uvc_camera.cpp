@@ -48,6 +48,10 @@ void UvcCamera::setup(const char *device_id, uint32_t width, uint32_t height, Uv
     if (log_fxn == 0) {
         this->log_fxn = &defaultLogFxn;
     }
+
+    verbose = false;
+
+    frame_timeout_ms = 0;
 }
 
 int UvcCamera::defaultLogFxn(int level, const char *msg, int len) {
@@ -73,16 +77,13 @@ UvcCamera::UvcCamera(const char *device_id, uint32_t width, uint32_t height, Uvc
 /* at this point: height, width and pixel size are known. init() initializes all buffers and camera parameters.
  * user must call start_capture() and stop_capture() to start and stop streaming from camera.
    complement of this function is close() which should be called when camera will no longer be used */
-int UvcCamera::init(int n_capture_buffers, int n_user_buffers) {
+int UvcCamera::init(int n_capture_buffers) {
 
     const int kDefaultCaptureBuffers = 4;
     if (n_capture_buffers == 0) { n_capture_buffers = kDefaultCaptureBuffers; }
 
-    const int kDefaultUserBuffers = 8;
-    if (n_user_buffers == 0) { n_user_buffers = kDefaultUserBuffers; }
-
     this->n_capture_buffers = n_capture_buffers;
-    this->n_user_buffers = n_user_buffers;
+//    this->n_user_buffers = n_user_buffers;
 
     const size_t kLogBufferSize = 256;
     log_buffer_size = kLogBufferSize;
@@ -211,14 +212,14 @@ int UvcCamera::init(int n_capture_buffers, int n_user_buffers) {
 
 /* configure incoming = camera streamer */
 
-    user_buffer_length = new size_t [n_user_buffers];
-    user_buffer_status = new unsigned int [n_user_buffers];
-    user_buffer = new unsigned char * [n_user_buffers];
-    for (int i = 0; i < n_user_buffers; ++i) {
-        user_buffer[i] = new unsigned char [frame_size];
-        user_buffer_status[i] = CAMERA_STATE_IDLE;
-        user_buffer_length[i] = frame_size;
-    }
+//    user_buffer_length = new size_t [n_user_buffers];
+//    user_buffer_status = new unsigned int [n_user_buffers];
+//    user_buffer = new unsigned char * [n_user_buffers];
+//    for (int i = 0; i < n_user_buffers; ++i) {
+//        user_buffer[i] = new unsigned char [frame_size];
+//        user_buffer_status[i] = CAMERA_STATE_IDLE;
+//        user_buffer_length[i] = frame_size;
+//    }
 
 //    new unsigned char * [ n_incoming_buffers ];
 //    incoming_buffer_semaphore = new unsigned int [ n_incoming_buffers ];
@@ -335,6 +336,34 @@ int UvcCamera::init(int n_capture_buffers, int n_user_buffers) {
 
 }
 
+void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height) {
+    uint8_t *p = (uint8_t *)src;
+    uint8_t t1, t2, t3;
+    for (int row = 0; row < height; ++row) {
+        for (int col = 0; col < width; col += 2) {
+            t1 = *p++;
+            t2 = *p++;
+            t3 = *p++;
+            uint16_t u = (t1 << 4) & (t2 >> 4);
+            uint16_t y0 = ((t2 & 0xf) << 8) | t3;
+            t1 = *p++;
+            t2 = *p++;
+            t3 = *p++;
+            uint16_t v = (t1 << 4) & (t2 >> 4);
+            uint16_t y1 = ((t2 & 0xf) << 8) | t3;
+
+            uint16_t b = yuv_to_bgr_yb * y0 + y0 + yuv_to_bgr_ub * u + yuv_to_bgr_vb * v;
+            uint16_t g = yuv_to_bgr_yg * y0 + y0 + yuv_to_bgr_ug * u + yuv_to_bgr_vg * v;
+            uint16_t r = yuv_to_bgr_yr * y0 + y0 + yuv_to_bgr_ur * u + yuv_to_bgr_vr * v;
+            uint32_t d = 0xff;
+            d = (d << 8) | (b >> 4);
+            d = (d << 8) | (g >> 4);
+            d = (d << 8) | (r >> 4);
+            *dst++ = d;
+        }
+    }
+}
+
 UvcCamera::~UvcCamera() {
 
     for(int i=0;i<n_capture_buffers;++i) {
@@ -351,9 +380,79 @@ UvcCamera::~UvcCamera() {
     if(capture_length) delete [] capture_length;
 
     delete [] log_buffer;
-    for (int i = 0; i < n_user_buffers; ++i) { delete [] user_buffer[i]; }
-    delete [] user_buffer;
-    delete [] user_buffer_length;
-    delete [] user_buffer_status;
+//    for (int i = 0; i < n_user_buffers; ++i) { delete [] user_buffer[i]; }
+//    delete [] user_buffer;
+//    delete [] user_buffer_length;
+//    delete [] user_buffer_status;
 }
 
+int UvcCamera::getFrame(FrameData *frame_data) {
+
+    /* wait for a frame to be ready, by polling */
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(fd, &fds);
+    struct timeval tv;
+    memset(&tv, 0, sizeof(struct timeval));
+    time_t seconds = frame_timeout_ms / 1000;
+    tv.tv_sec = seconds;
+    tv.tv_usec = (frame_timeout_ms - 1000 * seconds) / 1000;
+    int r = select(fd+1, &fds, NULL, NULL, &tv);
+    if(r == 0) {
+        size_t n_bytes = snprintf(log_buffer, log_buffer_size, "stream_from_camera(): select() timeout waiting for buffer");
+        if (log_fxn != 0) { (*log_fxn)(UvcCamera::LEVEL_WARNING, log_buffer, n_bytes); }
+        return ERROR_FRAME_TIMEOUT;
+    } else if(r == -1) {
+        perror("uvc - waiting for frame");
+        return ERROR_SELECT;
+    }
+
+    if(verbose && log_fxn) {
+        size_t n_bytes = snprintf(log_buffer, log_buffer_size, "stream_from_camera(): about to dequeue buffer");
+        if (log_fxn != 0) { (*log_fxn)(UvcCamera::LEVEL_DEBUG, log_buffer, n_bytes); }
+    }
+
+    struct v4l2_buffer buf;
+    memset(&buf, 0, sizeof(struct v4l2_buffer));
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
+    if(xioctl(fd, VIDIOC_DQBUF, &buf) == -1) {
+        perror("uvc - retrieving frame");
+        return ERROR_UVC_DQBUF;
+    }
+
+//    unsigned long int buffer_flags = buf.flags;
+//    int capture_index = buf.index; /* index of input capture buffer from camera */
+
+    frame_data->index = buf.index;
+    frame_data->payload = capture_buffer[frame_data->index];
+    frame_data->flags = buf.flags;
+
+    if(buf.flags & V4L2_BUF_FLAG_ERROR) {
+        return releaseFrame(frame_data->index);
+        /* there was an error in this buffer. requeue */
+        memset(&buf, 0, sizeof(struct v4l2_buffer));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+//        buf.index = capture_index;
+        if(xioctl(fd, VIDIOC_QBUF, &buf) == -1) {
+            perror("uvc - queue buffer");
+            return ERROR_UVC_QBUF;
+        }
+    }
+
+    return frame_data->index;
+}
+
+int UvcCamera::releaseFrame(int index) {
+    struct v4l2_buffer buf;
+    memset(&buf, 0, sizeof(struct v4l2_buffer));
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    buf.memory = V4L2_MEMORY_MMAP;
+    buf.index = index;
+    if(xioctl(fd, VIDIOC_QBUF, &buf) == -1) {
+        perror("uvc - queue buffer");
+        return ERROR_UVC_QBUF;
+    }
+    return 0;
+}
