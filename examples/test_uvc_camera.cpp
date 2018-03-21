@@ -152,7 +152,7 @@ int main(int argc, char **argv) {
 	}
 
 	UvcCamera *camera = new UvcCamera(device, width, height, logger);
-	camera->init();
+	camera->open();
 	camera->frame_timeout_ms = 1000;
 	UvcCamera::FrameData frame_data;
 	uint32_t *bgr_frame = new uint32_t [camera->width * camera->height];
@@ -177,6 +177,9 @@ int main(int argc, char **argv) {
 			printf("error\n");
 		}
 	}
+
+	camera->close();
+	delete camera;
 
 	// this is also possible: camera->log_fxn = logger;
 

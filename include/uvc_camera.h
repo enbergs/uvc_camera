@@ -28,7 +28,7 @@ const uint16_t yuv_to_bgr_vr = 0;
 
 void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height);
 void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height);
-void YUV422_to_RGBA(const unsigned char * source, unsigned char * dest, unsigned int width, unsigned int height, unsigned int stride);
+void YUV422_to_RGBA(const unsigned char *src, unsigned char * dst, unsigned int width, unsigned int height);
 void quick_YUV422_to_RGBA(const unsigned char *src, uint32_t *dst, unsigned int width, unsigned int height);
 void initialize_UYVY_to_RGBA();
 
@@ -42,12 +42,15 @@ public:
         ERROR_SELECT = -2,
         ERROR_UVC_DQBUF = -3,
         ERROR_UVC_QBUF = -4,
+        ERROR_CAPS = -5,
+        ERROR_PIXEL_FORMAT = -6,
+        ERROR_GET_PIXEL_FORMAT = -7,
+        ERROR_REQUEST_BUFFERS = -8,
+        ERROR_QUERY_BUFFER = -9,
+        ERROR_MMAP = -10,
+        ERROR_QUEUE_BUFFER = -11,
+        ERROR_ENABLE_STREAMING = -12,
     };
-//    enum {
-//        CAMERA_STATE_IDLE = 0,
-//        CAMERA_STATE_RUNNING,
-//        CAMERA_STATE_STOPPED
-//    };
 
     enum {
         LEVEL_DEBUG,
@@ -84,11 +87,6 @@ public:
     unsigned char **capture_buffer;
     size_t *capture_length;
 
-//    unsigned char **user_buffer;
-//    size_t *user_buffer_length;
-//    unsigned int *user_buffer_status;
-//    int n_user_buffers;
-
     typedef struct {
         uint8_t *payload;
         uint32_t index;
@@ -101,7 +99,8 @@ public:
     UvcCamera(const char *device_id, uint32_t width, uint32_t height, UvcCameraLogFxn log_fxn = 0);
     UvcCamera(int device_id, uint32_t width, uint32_t height, UvcCameraLogFxn log_fxn = 0);
     void setup(const char *device_id, uint32_t width, uint32_t height, UvcCameraLogFxn log_fxn);
-    int init(int n_capture_buffers = 0);
+    int open(int n_capture_buffers = 0, uint32_t pixel_format = 0);
+    int close();
     UvcCameraLogFxn log_fxn;
     ~UvcCamera();
     int getFrame(FrameData *frame_data);
