@@ -47,6 +47,8 @@ void UvcCamera::setup(const char *device_id, uint32_t width, uint32_t height, Uv
 
     if (log_fxn == 0) {
         this->log_fxn = &defaultLogFxn;
+    } else {
+        this->log_fxn = log_fxn;
     }
 
     verbose = false;
@@ -203,6 +205,29 @@ int UvcCamera::init(int n_capture_buffers) {
     if(log_fxn) (*log_fxn)(LEVEL_INFO, "mmap initialization complete", 0);
 
 /*** memory mapping complete ***/
+
+    /* queue the buffers */
+    for(unsigned int i=0;i<n_capture_buffers;++i) {
+        size_t n_bytes = snprintf(log_buffer, log_buffer_size, "camera: start_capture(): VIDIOC_QBUF %d", i);
+        if(log_fxn) (*log_fxn)(LEVEL_INFO, log_buffer, n_bytes);
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = i;
+        if(xioctl(fd, VIDIOC_QBUF, &buf) == -1) {
+            n_bytes = snprintf(log_buffer, log_buffer_size, "error: VIDIOC_QBUF %d", i);
+            if(log_fxn) (*log_fxn)(LEVEL_ERROR, log_buffer, n_bytes);
+            perror("queue buffer");
+            return -999;
+        }
+    }
+
+/* enable streaming */
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if(xioctl(fd, VIDIOC_STREAMON, &type) == -1) {
+        perror("start capture");
+        return -999;
+    }
 
     cpu_set_t cpu_set;
     int i, err, time0;
@@ -364,6 +389,84 @@ void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height) {
     }
 }
 
+typedef unsigned char byte;
+void YUV2RGB(byte *pRGB, byte *pYUV)
+{
+    byte y, u, v;
+    u = *pYUV; pYUV++;
+    y = *pYUV; pYUV++;
+    v = *pYUV;
+
+    *pRGB = static_cast<byte>(1.0*y + 8 + 1.402*(v-128));    pRGB++;                 // r
+    *pRGB = static_cast<byte>(1.0*y - 0.34413*(u-128) - 0.71414*(v-128)); pRGB++;   // g
+    *pRGB = static_cast<byte>(1.0*y + 1.772*(u-128) + 0);                            // b
+
+    pYUV++;
+    y = *pYUV;
+    pRGB++;
+
+    *pRGB = static_cast<byte>(1.0*y + 8 + 1.402*(v-128));    pRGB++;                 // r
+    *pRGB = static_cast<byte>(1.0*y - 0.34413*(u-128) - 0.71414*(v-128)); pRGB++;   // g
+    *pRGB = static_cast<byte>(1.0*y + 1.772*(u-128) + 0);                            // b
+}
+
+void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height) {
+    uint8_t *p = (uint8_t *)src;
+    uint8_t y0, y1;
+    int8_t u, v;
+    uint16_t b, g, r;
+    uint32_t tb, tg, tr;
+    for (int row = 0; row < height; ++row) {
+        for (int col = 0; col < width; col += 2) {
+            u = *p++;
+            y0 = *p++;
+            v = *p++;
+            y1 = *p++;
+
+            int32_t tu1 = 2081 * u;
+            int32_t tu2 = 404 * u;
+            int32_t tv1 = 1167 * v;
+            int32_t tv2 = 595 * v;
+
+            tr = y0;
+            tr = ((tr << 10) + tv1) >> 10;
+            if (tr > 0xff) tr = 0xff;
+
+            tg = y0;
+            tg = ((tg << 10) - tu2 - tv2) >> 10;
+            if (tg > 0xff) tg = 0xff;
+
+            tb = y0;
+            tb = ((tb << 10) + tu1) >> 10;
+            if (tb > 0xff) tb = 0xff;
+
+            uint32_t d = 0xff;
+            d = (d << 8) | tb;
+            d = (d << 8) | tg;
+            d = (d << 8) | tr;
+            *dst++ = d;
+
+            tr = y1;
+            tr = ((tr << 10) + tv1) >> 10;
+            if (tr > 0xff) tr = 0xff;
+
+            tg = y1;
+            tg = ((tg << 10) - tu2 - tv2) >> 10;
+            if (tg > 0xff) tg = 0xff;
+
+            tb = y1;
+            tb = ((tb << 10) + tu1) >> 10;
+            if (tb > 0xff) tb = 0xff;
+
+            d = 0xff;
+            d = (d << 8) | b;
+            d = (d << 8) | g;
+            d = (d << 8) | r;
+            *dst++ = d;
+        }
+    }
+}
+
 UvcCamera::~UvcCamera() {
 
     for(int i=0;i<n_capture_buffers;++i) {
@@ -387,6 +490,8 @@ UvcCamera::~UvcCamera() {
 }
 
 int UvcCamera::getFrame(FrameData *frame_data) {
+
+    frame_data->index = -9999;
 
     /* wait for a frame to be ready, by polling */
     fd_set fds;

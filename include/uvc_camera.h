@@ -10,17 +10,24 @@ typedef int (UvcCameraCallbackFxn)(UvcCamera *camera, unsigned char *data, void 
 typedef int (*UvcCameraLogFxn)(int level, const char *str, int length);
 typedef int (*UvcCameraProcessImageFxn)(UvcCamera *camera, const unsigned char *i_img, unsigned char *o_img);
 
-const uint16_t yuv_to_bgr_yb;
-const uint16_t yuv_to_bgr_yg;
-const uint16_t yuv_to_bgr_yr;
-const uint16_t yuv_to_bgr_ub;
-const uint16_t yuv_to_bgr_ug;
-const uint16_t yuv_to_bgr_ur;
-const uint16_t yuv_to_bgr_vb;
-const uint16_t yuv_to_bgr_vg;
-const uint16_t yuv_to_bgr_vr;
+
+
+//R = Y + 1.140V
+//G = Y - 0.395U - 0.581V
+//B = Y + 2.032U
+
+const uint16_t yuv_to_bgr_yb = 1;
+const uint16_t yuv_to_bgr_yg = 1;
+const uint16_t yuv_to_bgr_yr = 1;
+const uint16_t yuv_to_bgr_ub = 0;
+const uint16_t yuv_to_bgr_ug = 0;
+const uint16_t yuv_to_bgr_ur = 0;
+const uint16_t yuv_to_bgr_vb = 0;
+const uint16_t yuv_to_bgr_vg = 0;
+const uint16_t yuv_to_bgr_vr = 0;
 
 void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height);
+void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height);
 
 class UvcCamera {
 public:

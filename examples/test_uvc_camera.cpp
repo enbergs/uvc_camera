@@ -157,12 +157,20 @@ int main(int argc, char **argv) {
 	UvcCamera::FrameData frame_data;
 	uint32_t *bgr_frame = new uint32_t [camera->width * camera->height];
 
+	/* sync to camera */
+	width = camera->width;
+	height = camera->height;
+	std::string window_name("main");
+
 	while (run) {
 		uint8_t *src;
 		const time_t frame_timeout_ms = 1000;
 		int uvc_frame_index = camera->getFrame(&frame_data);
 		if (uvc_frame_index >= 0) {
-			uyvy12ToArgb(frame_data.payload, bgr_frame, camera->width, camera->height);
+			uyvy8ToBgr(frame_data.payload, bgr_frame, width, height);
+			Mat frame(height, width, CV_8UC4, bgr_frame);
+			imshow(window_name, frame);
+			waitKey(30);
 			camera->releaseFrame(frame_data.index);
 		} else if (uvc_frame_index < 0) {
 			printf("error\n");
