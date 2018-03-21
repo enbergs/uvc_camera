@@ -161,13 +161,14 @@ int main(int argc, char **argv) {
 	width = camera->width;
 	height = camera->height;
 	std::string window_name("main");
+	initialize_UYVY_to_RGBA();
 
 	while (run) {
 		uint8_t *src;
 		const time_t frame_timeout_ms = 1000;
 		int uvc_frame_index = camera->getFrame(&frame_data);
 		if (uvc_frame_index >= 0) {
-			uyvy8ToBgr(frame_data.payload, bgr_frame, width, height);
+			quick_YUV422_to_RGBA(frame_data.payload, bgr_frame, width, height);
 			Mat frame(height, width, CV_8UC4, bgr_frame);
 			imshow(window_name, frame);
 			waitKey(30);

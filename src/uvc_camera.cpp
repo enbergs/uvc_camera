@@ -81,6 +81,13 @@ UvcCamera::UvcCamera(const char *device_id, uint32_t width, uint32_t height, Uvc
    complement of this function is close() which should be called when camera will no longer be used */
 int UvcCamera::init(int n_capture_buffers) {
 
+    struct v4l2_capability caps;
+    memset(&caps, 0, sizeof(struct v4l2_capability));
+    if (xioctl(fd, VIDIOC_QUERYCAP, &caps) == -1) {
+        perror("query caps");
+        return -99999;
+    }
+
     const int kDefaultCaptureBuffers = 4;
     if (n_capture_buffers == 0) { n_capture_buffers = kDefaultCaptureBuffers; }
 
@@ -235,36 +242,6 @@ int UvcCamera::init(int n_capture_buffers) {
     unsigned int cpu_mask;
     frame_size = width * height * 4; /* accommodate BGRA */
 
-/* configure incoming = camera streamer */
-
-//    user_buffer_length = new size_t [n_user_buffers];
-//    user_buffer_status = new unsigned int [n_user_buffers];
-//    user_buffer = new unsigned char * [n_user_buffers];
-//    for (int i = 0; i < n_user_buffers; ++i) {
-//        user_buffer[i] = new unsigned char [frame_size];
-//        user_buffer_status[i] = CAMERA_STATE_IDLE;
-//        user_buffer_length[i] = frame_size;
-//    }
-
-//    new unsigned char * [ n_incoming_buffers ];
-//    incoming_buffer_semaphore = new unsigned int [ n_incoming_buffers ];
-//    incoming_buffer_length = new int [ n_incoming_buffers ];
-//    incoming_buffer_size = new int [ n_incoming_buffers ];
-//    frame_capture_timestamp = new uint64_t [ n_incoming_buffers ];
-//    frame_capture_index = new int [ n_incoming_buffers ];
-
-//    if(isize == 0) {
-//        isize = width * height * bytes_per_pixel; /* jsv. actually need to sync this with driver buffer size */
-//        isize = width * height * 4; /* jsv. this needs to accomodate BGR */
-//    }
-
-//    for(int i=0;i<n_incoming_buffers;++i) {
-//        incoming_buffer[i] = new unsigned char [ isize ];
-//        incoming_buffer_semaphore[i] = BUFFER_EMPTY;
-//        incoming_buffer_length[i] = 0;
-//        incoming_buffer_size[i] = isize;
-//    }
-
 #if 0
 
 /* camera streaming thread always needs to run, even if to /dev/null. it recycles buffers */
@@ -389,6 +366,107 @@ void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height) {
     }
 }
 
+uint32_t UYVY_to_RGBA[256 * 256 * 256];
+void initialize_UYVY_to_RGBA() {
+    uint32_t *lut = UYVY_to_RGBA;
+    int r, g, b, y, u, v, tu, tv;
+    // Clamp out of range values
+#define CLAMPRGB(t) (((t)>255)?255:(((t)<0)?0:(t)))
+    for (int y = 0; y < 256; ++y) {
+        for (int u = 0; u < 256; ++u) {
+            for (int v = 0; v < 256; ++v) {
+                tu = u - 128;
+                tv = v - 128;
+
+                // Color space conversion for RGB
+                r = CLAMPRGB((298*y+409*tv+128)>>8);
+                g = CLAMPRGB((298*y-100*tu-208*tv+128)>>8);
+                b = CLAMPRGB((298*y+516*tu+128)>>8);
+
+                *lut++ = 0xff000000 + ((r & 0xff) << 16) + ((g & 0xff) << 8) + (b & 0xff);
+            }
+        }
+    }
+}
+
+void quick_YUV422_to_RGBA(const unsigned char *src, uint32_t *dst, unsigned int width, unsigned int height) {
+    const unsigned char *yuv = src;
+    unsigned char u0, y0, v0, y1;
+
+    // Loop through 4 bytes at a time
+    for (unsigned int y = 0; y < height; y ++ ) {
+        for (unsigned int x = 0; x < width; x +=2 ) {
+            u0  = *yuv++;
+            y0  = *yuv++;
+            v0  = *yuv++;
+            y1  = *yuv++;
+            *dst++ = UYVY_to_RGBA[(y0 << 16) + (u0 << 8) + v0];
+            *dst++ = UYVY_to_RGBA[(y1 << 16) + (u0 << 8) + v0];
+        }
+    }
+}
+
+//
+//        YUV422_to_RGBA
+//
+// Y sampled at every pixel
+// U and V sampled at every second pixel
+// 2 pixels in 1 DWORD
+//
+//	R = Y + 1.403V
+//	G = Y - 0.344U - 0.714V
+//	B = Y + 1.770U
+//
+//	R = 298*y + 409*v + 128 >> 8
+//  G = 298*y - 100*u-208*v +128 >> 8
+//  B = 298*y + 516*u +128 >> 8
+//
+void YUV422_to_RGBA(const unsigned char * source, unsigned char * dest, unsigned int width, unsigned int height, unsigned int stride)
+{
+    // Clamp out of range values
+#define CLAMPRGB(t) (((t)>255)?255:(((t)<0)?0:(t)))
+
+    const unsigned char *yuv = source;
+    unsigned char *rgba = dest;
+    int r1 = 0 , g1 = 0 , b1 = 0; // , a1 = 0;
+    int r2 = 0 , g2 = 0 , b2 = 0; // a2 = 0;
+    int u0 = 0 , y0 = 0 , v0 = 0, y1 = 0;
+
+//    unsigned int padding = stride - width*4;
+
+    // Loop through 4 bytes at a time
+    for (unsigned int y = 0; y <height; y ++ ) {
+        for (unsigned int x = 0; x <width*2; x +=4 ) {
+            u0  = (int)*yuv++;
+            y0  = (int)*yuv++;
+            v0  = (int)*yuv++;
+            y1  = (int)*yuv++;
+            // u and v are +-0.5
+            u0 -= 128;
+            v0 -= 128;
+
+            // Color space conversion for RGB
+            r1 = CLAMPRGB((298*y0+409*v0+128)>>8);
+            g1 = CLAMPRGB((298*y0-100*u0-208*v0+128)>>8);
+            b1 = CLAMPRGB((298*y0+516*u0+128)>>8);
+            r2 = CLAMPRGB((298*y1+409*v0+128)>>8);
+            g2 = CLAMPRGB((298*y1-100*u0-208*v0+128)>>8);
+            b2 = CLAMPRGB((298*y1+516*u0+128)>>8);
+
+            *rgba++ = (unsigned char)b1;
+            *rgba++ = (unsigned char)g1;
+            *rgba++ = (unsigned char)r1;
+            *rgba++ = 255;
+            *rgba++ = (unsigned char)b2;
+            *rgba++ = (unsigned char)g2;
+            *rgba++ = (unsigned char)r2;
+            *rgba++ = 255;
+        }
+//        yuv += width*2; // half width source data
+//        yuv += padding; // if any
+    }
+}
+
 typedef unsigned char byte;
 void YUV2RGB(byte *pRGB, byte *pYUV)
 {
@@ -416,6 +494,7 @@ void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height) {
     int8_t u, v;
     uint16_t b, g, r;
     uint32_t tb, tg, tr;
+    uint8_t *xxx = (uint8_t *)dst;
     for (int row = 0; row < height; ++row) {
         for (int col = 0; col < width; col += 2) {
             u = *p++;
@@ -423,6 +502,25 @@ void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height) {
             v = *p++;
             y1 = *p++;
 
+//            *xxx++ = 0xff;
+            *xxx++ = (298 * y0 + 409 * v + 128) >> 8;
+            *xxx++ = (298 * y0 - 100 * u - 208 * v) >> 8;
+            *xxx++ = (298 * y0 + 516 * u + 128) >> 8;
+
+//            *xxx++ = static_cast<byte>(1.0 * y0 + 8 + 1.402*(v-128)); // r
+//            *xxx++ = static_cast<byte>(1.0 * y0 - 0.34413 * (u-128) - 0.71414*(v-128)); // g
+//            *xxx++ = static_cast<byte>(1.0 * y0 + 1.772 * (u-128) + 0); // b
+
+//            *xxx++ = 0xff;
+            *xxx++ = (298 * y1 + 409 * v + 128) >> 8;
+            *xxx++ = (298 * y1 - 100 * u - 208 * v) >> 8;
+            *xxx++ = (298 * y1 + 516 * u + 128) >> 8;
+
+//            *xxx++ = static_cast<byte>(1.0 * y1 + 8 + 1.402*(v-128)); // r
+//            *xxx++ = static_cast<byte>(1.0 * y1 - 0.34413 * (u-128) - 0.71414*(v-128)); // g
+//            *xxx++ = static_cast<byte>(1.0 * y1 + 1.772 * (u-128) + 0); // b
+
+#if 0
             int32_t tu1 = 2081 * u;
             int32_t tu2 = 404 * u;
             int32_t tv1 = 1167 * v;
@@ -463,6 +561,8 @@ void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height) {
             d = (d << 8) | g;
             d = (d << 8) | r;
             *dst++ = d;
+#endif
+
         }
     }
 }

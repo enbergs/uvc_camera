@@ -28,6 +28,9 @@ const uint16_t yuv_to_bgr_vr = 0;
 
 void uyvy12ToArgb(const uint8_t *src, uint32_t *dst, int width, int height);
 void uyvy8ToBgr(const uint8_t *src, uint32_t *dst, int width, int height);
+void YUV422_to_RGBA(const unsigned char * source, unsigned char * dest, unsigned int width, unsigned int height, unsigned int stride);
+void quick_YUV422_to_RGBA(const unsigned char *src, uint32_t *dst, unsigned int width, unsigned int height);
+void initialize_UYVY_to_RGBA();
 
 class UvcCamera {
 public:
