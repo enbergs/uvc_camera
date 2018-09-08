@@ -38,7 +38,7 @@ void *camera_looper(void *ext);
 void *analysis_looper(void *ext);
 
 constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
-
+constexpr size_t MaximumTypicalFeatures = 10000; /* TODO: the number of features we expect to see in typical image */
 unsigned int width = 1280, height = 960, frame_index = 0, fps = 30;
 
 static bool debug_mode = false;
@@ -54,7 +54,7 @@ int logger(int level, const char *str, int len) {
 }
 
 typedef struct {
-    std::vector<cv::Point2f> features;
+    std::vector<cv::Point2f> *features;
     cv::Mat *mat;
     UvcCamera::FrameData *frame_data; /* actually needed? TODO */
     uint8_t *y_data;
@@ -201,9 +201,15 @@ void *camera_looper(void *ext) {
         frame_data->frame_data->index = InvalidCameraFrameIndex;
         frame_data->y_data = new uint8_t [n_pixels];
         frame_data->mat = new cv::Mat(camera->height, camera->width, CV_8UC1, frame_data->y_data);
+        frame_data->features = new std::vector<cv::Point2f>(MaximumTypicalFeatures);
 	}
 
 	while (*thread_params->run != 0) {
+	    unsigned int preincremented_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
+	    if (preincremented_head == thread_params->frame_data_tail) { /* do not potentially overwrite currently accessed data */
+	        usleep(1000);
+	        continue;
+	    }
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data);
         if (uvc_frame_index >= 0) {
@@ -213,7 +219,7 @@ void *camera_looper(void *ext) {
             printf("error\n");
         }
 		/* wrap up loop */
-        thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
+        thread_params->frame_data_head = preincremented_head;
 	}
 
 	/* clean up; free resources */
@@ -233,19 +239,34 @@ void *camera_looper(void *ext) {
 
 void *analysis_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
+	int n_frames = 0;
     while (*thread_params->run != 0) {
         if (thread_params->frame_data_tail == thread_params->frame_data_head) { usleep(1000); continue; }
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
+        const cv::Mat &current_image = *frame_data->mat;
+        frame_data->features->clear(); /* reset vector */
+        featureDetection(current_image, *frame_data->features);
+
+        printf("number of features = %zu\n", frame_data->features->size());
+
+        ++n_frames;
+
+        /* fetch previous frame */
         unsigned int previous_index = (thread_params->frame_data_tail - 1) & thread_params->frame_data_mask;
         FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
         const cv::Mat &previous_image = *prev_frame_data->mat;
-        const cv::Mat &current_image = *frame_data->mat;
+
         std::vector<uchar> status;
-        // featureTracking(previous_image, current_image, prev_frame_data->features, frame_data->features, status);
-        // cv::Mat mask, R, t;
-        // cv::Mat E = findEssentialMat(prev_frame_data->features, frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
-        // recoverPose(E, prev_frame_data->features, frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
-        imshow("main", current_image);
+
+        printf("numbers of features = %zu / %zu\n", prev_frame_data->features->size(), frame_data->features->size());
+
+        if (n_frames > 1) {
+            featureTracking(previous_image, current_image, *prev_frame_data->features, *frame_data->features, status);
+            cv::Mat mask, R, t;
+            cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+            recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+        } /* we need at least two frames to get the pipeline working */
+        imshow("main", previous_image);
         cv::waitKey(30);
         /* wrap up loop */
         thread_params->frame_data_tail = (thread_params->frame_data_tail + 1) & thread_params->frame_data_mask;
