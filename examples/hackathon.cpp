@@ -56,12 +56,12 @@ int logger(int level, const char *str, int len) {
 typedef struct {
     std::vector<cv::Point2f> features;
     cv::Mat *mat;
-    UvcCamera::FrameData *frame_data;
+    UvcCamera::FrameData *frame_data; /* actually needed? TODO */
     uint8_t *y_data;
 } FrameData;
 
 typedef struct {
-	int *run;
+	bool *run;
 	UvcCamera *camera;
 	unsigned int frame_data_size;
 	unsigned int frame_data_head;
@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
 //	uint32_t *bgr_data = new uint32_t [camera->width * camera->height];
 //	uint8_t *y_data = new uint8_t [camera->width * camera->height];
 
-	ThreadParams *thread_params;
+	ThreadParams *thread_params = new ThreadParams;
 	thread_params->camera = camera;
 
 	/* sync to camera */
@@ -142,35 +142,38 @@ int main(int argc, char **argv) {
 	pthread_t camera_thread_id, analysis_thread_id, display_thread_id;
     cpu_set_t cpu_set;
 
-    err = pthread_create(&camera_thread_id, NULL, camera_looper, NULL); /* create thread */
+    thread_params->run = &run;
+
+    err = pthread_create(&camera_thread_id, NULL, camera_looper, thread_params); /* create thread */
     cpu_mask = 1;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(camera_thread_id, sizeof(cpu_set_t), &cpu_set);
 
-    err = pthread_create(&analysis_thread_id, NULL, analysis_looper, NULL); /* create thread */
+    err = pthread_create(&analysis_thread_id, NULL, analysis_looper, thread_params); /* create thread */
     cpu_mask = 2;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(analysis_thread_id, sizeof(cpu_set_t), &cpu_set);
 
     while (run) {
-		uint8_t *src;
-		const time_t frame_timeout_ms = 1000;
-		int uvc_frame_index = camera->getFrame(&frame_data);
-		if (uvc_frame_index >= 0) {
-			quick_YUV422_to_RGBA(frame_data.payload, bgr_data, width, height);
-			yuv422_to_y(frame_data.payload, y_data, width, height);
-			// YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height); /* TODO this also works but quick version is ... */
-			// Mat bgr_frame(height, width, CV_8UC4, bgr_frame);
-			// imshow(window_name, bgr_frame);
-			Mat y_frame(height, width, CV_8UC1, y_data);
-			imshow(window_name, y_frame);
-			waitKey(30);
-			camera->releaseFrame(frame_data.index);
-		} else if (uvc_frame_index < 0) {
-			printf("error\n");
-		}
+        usleep(100000);
+//		uint8_t *src;
+//		const time_t frame_timeout_ms = 1000;
+//		int uvc_frame_index = camera->getFrame(&frame_data);
+//		if (uvc_frame_index >= 0) {
+//			quick_YUV422_to_RGBA(frame_data.payload, bgr_data, width, height);
+//			yuv422_to_y(frame_data.payload, y_data, width, height);
+//			// YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height); /* TODO this also works but quick version is ... */
+//			// Mat bgr_frame(height, width, CV_8UC4, bgr_frame);
+//			// imshow(window_name, bgr_frame);
+//			Mat y_frame(height, width, CV_8UC1, y_data);
+//			imshow(window_name, y_frame);
+//			waitKey(30);
+//			camera->releaseFrame(frame_data.index);
+//		} else if (uvc_frame_index < 0) {
+//			printf("error\n");
+//		}
 	}
 
 	camera->close();
@@ -194,7 +197,7 @@ void *camera_looper(void *ext) {
 		thread_params->frame_data_pool[i] = new FrameData;
         FrameData *frame_data = thread_params->frame_data_pool[i];
 		frame_data->frame_data = new UvcCamera::FrameData;
-        frame_data->frame_data->payload = new uint8_t [2 * n_pixels]; /* 2 bytes per pixel in yuv420 */
+        frame_data->frame_data->payload = new uint8_t [2 * n_pixels]; /* 2 bytes per pixel in yuyv */
         frame_data->frame_data->index = InvalidCameraFrameIndex;
         frame_data->y_data = new uint8_t [n_pixels];
         frame_data->mat = new cv::Mat(camera->height, camera->width, CV_8UC1, frame_data->y_data);
@@ -203,15 +206,12 @@ void *camera_looper(void *ext) {
 	while (*thread_params->run != 0) {
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data);
-		unsigned int previous_index = (thread_params->frame_data_head - 1) & thread_params->frame_data_mask;
-		FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
-		const cv::Mat &previous_image = *prev_frame_data->mat;
-		const cv::Mat &current_image = *frame_data->mat;
-		std::vector<uchar> status;
-		featureTracking(previous_image, current_image, prev_frame_data->features, frame_data->features, status);
-		cv::Mat mask, R, t;
-        cv::Mat E = findEssentialMat(prev_frame_data->features, frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
-        recoverPose(E, prev_frame_data->features, frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+        if (uvc_frame_index >= 0) {
+            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height);
+            camera->releaseFrame(uvc_frame_index);
+        } else if (uvc_frame_index < 0) {
+            printf("error\n");
+        }
 		/* wrap up loop */
         thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
 	}
@@ -233,4 +233,21 @@ void *camera_looper(void *ext) {
 
 void *analysis_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
+    while (*thread_params->run != 0) {
+        if (thread_params->frame_data_tail == thread_params->frame_data_head) { usleep(1000); continue; }
+        FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
+        unsigned int previous_index = (thread_params->frame_data_tail - 1) & thread_params->frame_data_mask;
+        FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
+        const cv::Mat &previous_image = *prev_frame_data->mat;
+        const cv::Mat &current_image = *frame_data->mat;
+        std::vector<uchar> status;
+        // featureTracking(previous_image, current_image, prev_frame_data->features, frame_data->features, status);
+        // cv::Mat mask, R, t;
+        // cv::Mat E = findEssentialMat(prev_frame_data->features, frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+        // recoverPose(E, prev_frame_data->features, frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+        imshow("main", current_image);
+        cv::waitKey(30);
+        /* wrap up loop */
+        thread_params->frame_data_tail = (thread_params->frame_data_tail + 1) & thread_params->frame_data_mask;
+    }
 }

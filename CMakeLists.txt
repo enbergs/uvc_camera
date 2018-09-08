@@ -14,7 +14,7 @@ set(SOURCE_FILES src/colorspaces.cpp src/uvc_camera.cpp)
 
 add_executable(test_uvc_camera examples/test_uvc_camera.cpp ${SOURCE_FILES})
 add_executable(pose_calibration_uvc_camera examples/pose_calibration_uvc_camera.cpp ${SOURCE_FILES})
-add_executable(hackathon2018 examples/hackathon.cpp examples/visodo.cpp examples/vo_features.h ${SOURCE_FILES})
+add_executable(hackathon2018 examples/hackathon.cpp ${SOURCE_FILES})
 
 target_link_libraries(test_uvc_camera ${OpenCV_LIBS})
 target_link_libraries(pose_calibration_uvc_camera ${OpenCV_LIBS})
