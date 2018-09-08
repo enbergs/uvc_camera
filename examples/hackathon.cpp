@@ -26,12 +26,18 @@
 
 #include <uvc_camera.h>
 
+#include "vo_features.h"
+
 using namespace cv;
 using namespace std;
 
 /* default settings */
 
 /* function prototypes */
+void *camera_looper(void *ext);
+void *analysis_looper(void *ext);
+
+constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
 
 unsigned int width = 1280, height = 960, frame_index = 0, fps = 30;
 
@@ -48,24 +54,25 @@ int logger(int level, const char *str, int len) {
 }
 
 typedef struct {
+    std::vector<cv::Point2f> features;
+    cv::Mat *mat;
+    UvcCamera::FrameData *frame_data;
+    uint8_t *y_data;
+} FrameData;
+
+typedef struct {
 	int *run;
 	UvcCamera *camera;
 	unsigned int frame_data_size;
 	unsigned int frame_data_head;
 	unsigned int frame_data_tail;
 	unsigned int frame_data_mask;
-	UvcCamera::FrameData **frame_data_pool;
-	unsigned int y_data_size;
-	unsigned int y_data_head;
-	unsigned int y_data_tail;
-	unsigned int y_data_mask;
-	uint8_t **y_data_pool;
+	FrameData **frame_data_pool;
 } ThreadParams;
 
-typedef struct {
-    std::vector<cv::Point2f> features;
-    cv::Mat mat;
-} FrameData;
+// TODO - where to parse from calib.txt
+double kFocalLengthPX = 718.8560;
+cv::Point2d kPrinciplePointPX(607.1928, 185.2157);
 
 int main(int argc, char **argv) {
 
@@ -102,11 +109,6 @@ int main(int argc, char **argv) {
 		else if(strcmp(argv[i], "-display") == 0) display = true; 
 //		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-fps") == 0) fps = atoi(argv[++i]);
-		else if(strcmp(argv[i], "-mjpg") == 0) fourcc = "MJPG";
-		else if(strcmp(argv[i], "-jpg") == 0) {
-			compression_scheme = UvcCamera::COMPRESSION_JPEG;
-			compression_quality = atoi(argv[++i]);
-		}
 		else if(strcmp(argv[i], "-vga") == 0) {
 			width = 640;
 			height = 480;
@@ -122,9 +124,12 @@ int main(int argc, char **argv) {
 	UvcCamera *camera = new UvcCamera(device, width, height, logger);
 	camera->open();
 	camera->frame_timeout_ms = 1000;
-	UvcCamera::FrameData frame_data;
-	uint32_t *bgr_data = new uint32_t [camera->width * camera->height];
-	uint8_t *y_data = new uint8_t [camera->width * camera->height];
+//	UvcCamera::FrameData frame_data;
+//	uint32_t *bgr_data = new uint32_t [camera->width * camera->height];
+//	uint8_t *y_data = new uint8_t [camera->width * camera->height];
+
+	ThreadParams *thread_params;
+	thread_params->camera = camera;
 
 	/* sync to camera */
 	width = camera->width;
@@ -132,7 +137,24 @@ int main(int argc, char **argv) {
 	std::string window_name("main");
 	initialize_UYVY_to_RGBA();
 
-	while (run) {
+	int err;
+	uint32_t cpu_mask = 1;
+	pthread_t camera_thread_id, analysis_thread_id, display_thread_id;
+    cpu_set_t cpu_set;
+
+    err = pthread_create(&camera_thread_id, NULL, camera_looper, NULL); /* create thread */
+    cpu_mask = 1;
+    CPU_ZERO(&cpu_set);
+    for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
+    err = pthread_setaffinity_np(camera_thread_id, sizeof(cpu_set_t), &cpu_set);
+
+    err = pthread_create(&analysis_thread_id, NULL, analysis_looper, NULL); /* create thread */
+    cpu_mask = 2;
+    CPU_ZERO(&cpu_set);
+    for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
+    err = pthread_setaffinity_np(analysis_thread_id, sizeof(cpu_set_t), &cpu_set);
+
+    while (run) {
 		uint8_t *src;
 		const time_t frame_timeout_ms = 1000;
 		int uvc_frame_index = camera->getFrame(&frame_data);
@@ -167,39 +189,45 @@ void *camera_looper(void *ext) {
 	thread_params->frame_data_mask = thread_params->frame_data_size - 1;
 	thread_params->frame_data_head = 0;
 	thread_params->frame_data_tail = 0;
-	thread_params->frame_data_pool = new UvcCamera::FrameData * [thread_params->frame_data_size];
+	thread_params->frame_data_pool = new FrameData * [thread_params->frame_data_size];
 	for (unsigned int i = 0; i < thread_params->frame_data_size; ++i) {
-		thread_params->frame_data_pool[i] = new UvcCamera::FrameData;
-		thread_params->frame_data_pool[i]->payload = new uint8_t [2 * n_pixels]; /* 2 bytes per pixel in yuv420 */
-	}
-
-	thread_params->y_data_size = 8;
-	thread_params->y_data_head = 0;
-	thread_params->y_data_tail = 0;
-	thread_params->y_data_pool = new uint8_t * [thread_params->y_data_size];
-	for (unsigned int i = 0; i < thread_params->y_data_size; ++i) {
-		thread_params->y_data_pool[i] = new uint8_t [n_pixels];
+		thread_params->frame_data_pool[i] = new FrameData;
+        FrameData *frame_data = thread_params->frame_data_pool[i];
+		frame_data->frame_data = new UvcCamera::FrameData;
+        frame_data->frame_data->payload = new uint8_t [2 * n_pixels]; /* 2 bytes per pixel in yuv420 */
+        frame_data->frame_data->index = InvalidCameraFrameIndex;
+        frame_data->y_data = new uint8_t [n_pixels];
+        frame_data->mat = new cv::Mat(camera->height, camera->width, CV_8UC1, frame_data->y_data);
 	}
 
 	while (*thread_params->run != 0) {
-		int uvc_frame_index = camera->getFrame(thread_params->frame_data_pool[thread_params->frame_data_head]);
-		thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
-		vector<uchar> status;
-		featureTracking(prevImage, currImage, prevFeatures, currFeatures, status);
+	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
+		int uvc_frame_index = camera->getFrame(frame_data->frame_data);
+		unsigned int previous_index = (thread_params->frame_data_head - 1) & thread_params->frame_data_mask;
+		FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
+		const cv::Mat &previous_image = *prev_frame_data->mat;
+		const cv::Mat &current_image = *frame_data->mat;
+		std::vector<uchar> status;
+		featureTracking(previous_image, current_image, prev_frame_data->features, frame_data->features, status);
+		cv::Mat mask, R, t;
+        cv::Mat E = findEssentialMat(prev_frame_data->features, frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+        recoverPose(E, prev_frame_data->features, frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+		/* wrap up loop */
+        thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
 	}
 
 	/* clean up; free resources */
 
-	for (unsigned int i = 0; i < thread_params->frame_data_size; ++i) {
-		delete [] thread_params->frame_data_pool[i]->payload;
-		delete [] thread_params->frame_data_pool[i];
-	}
-	delete [] thread_params->frame_data_pool;
-
-	for (unsigned int i = 0; i < thread_params->y_data_size; ++i) {
-		delete [] thread_params->y_data_pool[i];
-	}
-	delete [] thread_params->y_data_pool;
+//	for (unsigned int i = 0; i < thread_params->frame_data_size; ++i) {
+//		delete [] thread_params->frame_data_pool[i]->payload;
+//		delete [] thread_params->frame_data_pool[i];
+//	}
+//	delete [] thread_params->frame_data_pool;
+//
+//	for (unsigned int i = 0; i < thread_params->frame_data_size; ++i) {
+//		delete [] thread_params->y_data_pool[i];
+//	}
+//	delete [] thread_params->y_data_pool;
 
 }
 
