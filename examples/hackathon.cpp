@@ -31,11 +31,18 @@
 using namespace cv;
 using namespace std;
 
+/* current issues */
+
+/* TODO list
+ * previous image/frame always has the same number of features
+ */
+
 /* default settings */
 
 /* function prototypes */
 void *camera_looper(void *ext);
 void *analysis_looper(void *ext);
+void *visualization_looper(void *ext);
 
 constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
 constexpr size_t MaximumTypicalFeatures = 10000; /* TODO: the number of features we expect to see in typical image */
@@ -68,6 +75,8 @@ typedef struct {
 	unsigned int frame_data_tail;
 	unsigned int frame_data_mask;
 	FrameData **frame_data_pool;
+	unsigned int display_index;
+	bool display_busy;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -139,7 +148,7 @@ int main(int argc, char **argv) {
 
 	int err;
 	uint32_t cpu_mask = 1;
-	pthread_t camera_thread_id, analysis_thread_id, display_thread_id;
+	pthread_t camera_thread_id, analysis_thread_id, visualization_thread_id;
     cpu_set_t cpu_set;
 
     thread_params->run = &run;
@@ -155,6 +164,12 @@ int main(int argc, char **argv) {
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(analysis_thread_id, sizeof(cpu_set_t), &cpu_set);
+
+    err = pthread_create(&visualization_thread_id, NULL, visualization_looper, thread_params); /* create thread */
+    cpu_mask = 4;
+    CPU_ZERO(&cpu_set);
+    for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
+    err = pthread_setaffinity_np(visualization_thread_id, sizeof(cpu_set_t), &cpu_set);
 
     while (run) {
         usleep(100000);
@@ -210,6 +225,12 @@ void *camera_looper(void *ext) {
 	        usleep(1000);
 	        continue;
 	    }
+
+	    if (thread_params->display_busy && (preincremented_head == thread_params->display_index)) { /* do not overwrite data in display */
+            usleep(1000);
+            continue;
+	    }
+
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data);
         if (uvc_frame_index >= 0) {
@@ -235,6 +256,7 @@ void *camera_looper(void *ext) {
 //	}
 //	delete [] thread_params->y_data_pool;
 
+    return NULL;
 }
 
 void *analysis_looper(void *ext) {
@@ -258,7 +280,7 @@ void *analysis_looper(void *ext) {
 
         std::vector<uchar> status;
 
-        printf("numbers of features = %zu / %zu\n", prev_frame_data->features->size(), frame_data->features->size());
+        printf("numbers of features = %zu(%d) / %zu(%d)\n", prev_frame_data->features->size(), previous_index, frame_data->features->size(), thread_params->frame_data_tail);
 
         if (n_frames > 1) {
             featureTracking(previous_image, current_image, *prev_frame_data->features, *frame_data->features, status);
@@ -266,9 +288,28 @@ void *analysis_looper(void *ext) {
             cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
             recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
         } /* we need at least two frames to get the pipeline working */
-        imshow("main", previous_image);
-        cv::waitKey(30);
-        /* wrap up loop */
-        thread_params->frame_data_tail = (thread_params->frame_data_tail + 1) & thread_params->frame_data_mask;
+
+        if (thread_params->display_busy == false) {
+            thread_params->display_index = thread_params->frame_data_tail;
+            thread_params->display_busy = true;
+        }
+
+        thread_params->frame_data_tail = (thread_params->frame_data_tail + 1) & thread_params->frame_data_mask; /* wrap up loop */
     }
+    return NULL;
+}
+
+void *visualization_looper(void *ext) {
+    ThreadParams *thread_params = (ThreadParams *) ext;
+    thread_params->display_busy = false;
+    while (*thread_params->run != 0) {
+        if (thread_params->display_busy == true) {
+            FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
+            const cv::Mat image = *frame_data->mat;
+            imshow("main", image);
+            cv::waitKey(30);
+            thread_params->display_busy = false;
+        }
+    }
+    return NULL;
 }
