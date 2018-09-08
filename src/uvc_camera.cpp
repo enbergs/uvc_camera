@@ -268,6 +268,36 @@ void initialize_UYVY_to_RGBA() {
     }
 }
 
+void yuv422_to_y(const unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height) {
+    const unsigned char *yuv = src;
+    unsigned long int n = width * height;
+    unsigned char *y_dst = dst;
+    for (unsigned long int i = 0; i < n; ++i, yuv += 2) {
+        *y_dst++ = *yuv;
+    }
+}
+
+/* thoroughly untested. probably wrong */
+void yuv422_to_yuv420sp(const unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height) {
+    const unsigned char *yuv = src;
+    unsigned char u0, y0, v0, y1;
+    unsigned long int n_pixels = width * height;
+    unsigned char *y_dst = dst;
+    unsigned char *uv_dst = dst + n_pixels;
+    for (unsigned int y = 0; y < height; y ++ ) {
+        for (unsigned int x = 0; x < width; x +=2 ) {
+            y0  = *yuv++;
+            u0  = *yuv++;
+            y1  = *yuv++;
+            v0  = *yuv++;
+            *y_dst++ = y0;
+            *y_dst++ = y1;
+            *uv_dst++ = u0;
+            *uv_dst++ = v0;
+        }
+    }
+}
+
 void quick_YUV422_to_RGBA(const unsigned char *src, uint32_t *dst, unsigned int width, unsigned int height) {
     const unsigned char *yuv = src;
     unsigned char u0, y0, v0, y1;
@@ -275,10 +305,10 @@ void quick_YUV422_to_RGBA(const unsigned char *src, uint32_t *dst, unsigned int 
     // Loop through 4 bytes at a time
     for (unsigned int y = 0; y < height; y ++ ) {
         for (unsigned int x = 0; x < width; x +=2 ) {
-            u0  = *yuv++;
             y0  = *yuv++;
-            v0  = *yuv++;
+            u0  = *yuv++;
             y1  = *yuv++;
+            v0  = *yuv++;
             *dst++ = UYVY_to_RGBA[(y0 << 16) + (u0 << 8) + v0];
             *dst++ = UYVY_to_RGBA[(y1 << 16) + (u0 << 8) + v0];
         }

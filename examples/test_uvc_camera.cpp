@@ -155,7 +155,8 @@ int main(int argc, char **argv) {
 	camera->open();
 	camera->frame_timeout_ms = 1000;
 	UvcCamera::FrameData frame_data;
-	uint32_t *bgr_frame = new uint32_t [camera->width * camera->height];
+	uint32_t *bgr_data = new uint32_t [camera->width * camera->height];
+	uint8_t *y_data = new uint8_t [camera->width * camera->height];
 
 	/* sync to camera */
 	width = camera->width;
@@ -168,10 +169,13 @@ int main(int argc, char **argv) {
 		const time_t frame_timeout_ms = 1000;
 		int uvc_frame_index = camera->getFrame(&frame_data);
 		if (uvc_frame_index >= 0) {
-			// quick_YUV422_to_RGBA(frame_data.payload, bgr_frame, width, height);
-			YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height);
-			Mat frame(height, width, CV_8UC4, bgr_frame);
-			imshow(window_name, frame);
+			quick_YUV422_to_RGBA(frame_data.payload, bgr_data, width, height);
+			yuv422_to_y(frame_data.payload, y_data, width, height);
+			// YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height); /* TODO this also works but quick version is ... */
+			// Mat bgr_frame(height, width, CV_8UC4, bgr_frame);
+			// imshow(window_name, bgr_frame);
+			Mat y_frame(height, width, CV_8UC1, y_data);
+			imshow(window_name, y_frame);
 			waitKey(30);
 			camera->releaseFrame(frame_data.index);
 		} else if (uvc_frame_index < 0) {
