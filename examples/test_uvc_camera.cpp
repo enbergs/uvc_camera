@@ -168,7 +168,8 @@ int main(int argc, char **argv) {
 		const time_t frame_timeout_ms = 1000;
 		int uvc_frame_index = camera->getFrame(&frame_data);
 		if (uvc_frame_index >= 0) {
-			quick_YUV422_to_RGBA(frame_data.payload, bgr_frame, width, height);
+			// quick_YUV422_to_RGBA(frame_data.payload, bgr_frame, width, height);
+			YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height);
 			Mat frame(height, width, CV_8UC4, bgr_frame);
 			imshow(window_name, frame);
 			waitKey(30);

@@ -312,10 +312,10 @@ void YUV422_to_RGBA(const unsigned char *src, unsigned char *dst, unsigned int w
 
     for (unsigned int y = 0; y <height; y ++ ) {
         for (unsigned int x = 0; x <width*2; x +=4 ) {
-            u0  = (int)*yuv++;
             y0  = (int)*yuv++;
-            v0  = (int)*yuv++;
+            u0  = (int)*yuv++;
             y1  = (int)*yuv++;
+            v0  = (int)*yuv++;
 
             u0 -= 128;
             v0 -= 128;
