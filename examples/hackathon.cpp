@@ -34,7 +34,8 @@ using namespace std;
 /* current issues */
 
 /* TODO list
- * previous image/frame always has the same number of features
+ * a) previous image/frame always has the same number of features
+ * b) only good frames (more than X features) stay in the history channel
  */
 
 /* default settings */
@@ -270,17 +271,17 @@ void *camera_looper(void *ext) {
 
 void *analysis_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
-	int n_frames = 0;
+	unsigned int n_frames = 0;
+	std::vector<uchar> status;
     while (*thread_params->run != 0) {
         unsigned int room = (thread_params->frame_data_head - thread_params->frame_data_tail) % thread_params->frame_data_mask;
         // if (room < KeepHistory) { usleep(1000); continue; }
         if (room < 1) { usleep(1000); continue; }
+
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
         const cv::Mat &current_image = *frame_data->mat;
-        frame_data->features->clear(); /* reset vector */
+        // TODO necessary? frame_data->features->clear(); /* reset vector */
         featureDetection(current_image, *frame_data->features);
-
-        printf("number of features = %zu\n", frame_data->features->size());
 
         ++n_frames;
 
@@ -289,13 +290,10 @@ void *analysis_looper(void *ext) {
         FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
         const cv::Mat &previous_image = *prev_frame_data->mat;
 
-        std::vector<uchar> status;
+		size_t n_previous_features = prev_frame_data->features->size(), n_current_features = frame_data->features->size();
+		printf("numbers of features = %zu(%d) / %zu(%d)\n", n_previous_features, previous_index, n_current_features, thread_params->frame_data_tail);
 
-        printf("numbers of features = %zu(%d) / %zu(%d)\n", prev_frame_data->features->size(), previous_index, frame_data->features->size(), thread_params->frame_data_tail);
-
-        featureDetection(current_image, *frame_data->features); /* unconditionally detect features */
-
-        if (n_frames > 1) {
+		if (n_frames > 1) { /* we need at least two frames to get the pipeline working */
             cv::Mat mask, R, t;
             int minimum_feature_set_size = 10;
             printf("feature set sizes = %zu/%zu\n", prev_frame_data->features->size(), frame_data->features->size());
@@ -304,7 +302,11 @@ void *analysis_looper(void *ext) {
                 cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
                 recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
             }
-        } /* we need at least two frames to get the pipeline working */
+			size_t n_prev_features = prev_frame_data->features->size(), n_curr_features = frame_data->features->size(); /* TODO check again */
+			printf("check numbers of features = %zu / %zu\n", n_prev_features, n_curr_features);
+        } else if (n_frames == 0) {
+			featureDetection(current_image, *frame_data->features);
+		}
 
         if (thread_params->display_busy == false) {
             thread_params->display_index = thread_params->frame_data_tail;
