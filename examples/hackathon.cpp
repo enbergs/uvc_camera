@@ -47,6 +47,7 @@ void *visualization_looper(void *ext);
 constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
 constexpr size_t MaximumTypicalFeatures = 10000; /* TODO: the number of features we expect to see in typical image */
 unsigned int width = 1280, height = 960, frame_index = 0, fps = 30;
+constexpr unsigned int KeepHistory = 4; /* how many frames back we should keep */
 
 static bool debug_mode = false;
 bool run = true;
@@ -220,27 +221,35 @@ void *camera_looper(void *ext) {
 	}
 
 	while (*thread_params->run != 0) {
-	    unsigned int preincremented_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
-	    if (preincremented_head == thread_params->frame_data_tail) { /* do not potentially overwrite currently accessed data */
-	        usleep(1000);
-	        continue;
+
+        /* do not potentially overwrite currently accessed data. need to keep a few frames of history in queue */
+        unsigned int instantaneous_tail = thread_params->frame_data_tail; /* tail is subject to change in other thread */
+        unsigned int instantaneous_head = thread_params->frame_data_head;
+	    for (unsigned i = 0; i < KeepHistory; ++i) {
+	        unsigned int stay_away = (instantaneous_tail - i) & thread_params->frame_data_mask;
+	        if (instantaneous_head == stay_away) {
+	            usleep(1000);
+                continue;
+	        }
 	    }
 
-	    if (thread_params->display_busy && (preincremented_head == thread_params->display_index)) { /* do not overwrite data in display */
+	    /* in normal operation, display frame is in list of history frames, and next check is superfluous. but, to be safe... */
+	    if (thread_params->display_busy && (instantaneous_head == thread_params->display_index)) { /* do not overwrite data in display */
             usleep(1000);
             continue;
 	    }
 
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
-		int uvc_frame_index = camera->getFrame(frame_data->frame_data);
+		int uvc_frame_index = camera->getFrame(frame_data->frame_data); /* grab data */
         if (uvc_frame_index >= 0) {
-            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height);
-            camera->releaseFrame(uvc_frame_index);
+            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height); /* convert to grey scale */
+            camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
         } else if (uvc_frame_index < 0) {
-            printf("error\n");
+            printf("TODO error\n");
         }
+
 		/* wrap up loop */
-        thread_params->frame_data_head = preincremented_head;
+        thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
 	}
 
 	/* clean up; free resources */
@@ -263,7 +272,9 @@ void *analysis_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
 	int n_frames = 0;
     while (*thread_params->run != 0) {
-        if (thread_params->frame_data_tail == thread_params->frame_data_head) { usleep(1000); continue; }
+        unsigned int room = (thread_params->frame_data_head - thread_params->frame_data_tail) % thread_params->frame_data_mask;
+        // if (room < KeepHistory) { usleep(1000); continue; }
+        if (room < 1) { usleep(1000); continue; }
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
         const cv::Mat &current_image = *frame_data->mat;
         frame_data->features->clear(); /* reset vector */
@@ -282,11 +293,17 @@ void *analysis_looper(void *ext) {
 
         printf("numbers of features = %zu(%d) / %zu(%d)\n", prev_frame_data->features->size(), previous_index, frame_data->features->size(), thread_params->frame_data_tail);
 
+        featureDetection(current_image, *frame_data->features); /* unconditionally detect features */
+
         if (n_frames > 1) {
-            featureTracking(previous_image, current_image, *prev_frame_data->features, *frame_data->features, status);
             cv::Mat mask, R, t;
-            cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
-            recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+            int minimum_feature_set_size = 10;
+            printf("feature set sizes = %zu/%zu\n", prev_frame_data->features->size(), frame_data->features->size());
+            if (frame_data->features->size() >= minimum_feature_set_size) {
+                featureTracking(previous_image, current_image, *prev_frame_data->features, *frame_data->features, status);
+                cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+                recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+            }
         } /* we need at least two frames to get the pipeline working */
 
         if (thread_params->display_busy == false) {
