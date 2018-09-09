@@ -23,10 +23,12 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
+#include <opencv2/video/tracking.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/features2d/features2d.hpp>
+#include <opencv2/calib3d/calib3d.hpp>
 
 #include <uvc_camera.h>
-
-#include "vo_features.h"
 
 using namespace cv;
 using namespace std;
@@ -49,6 +51,7 @@ constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
 constexpr size_t MaximumTypicalFeatures = 10000; /* TODO: the number of features we expect to see in typical image */
 unsigned int width = 1280, height = 960, frame_index = 0, fps = 30;
 constexpr unsigned int KeepHistory = 4; /* how many frames back we should keep */
+constexpr unsigned int MinimumFeaturesForTracking = 500;
 
 static bool debug_mode = false;
 bool run = true;
@@ -63,7 +66,8 @@ int logger(int level, const char *str, int len) {
 }
 
 typedef struct {
-    std::vector<cv::Point2f> *features;
+    std::vector<cv::Point2f> *eigen_features; /* detected features */
+    std::vector<cv::Point2f> *track_features; /* features tracked from previous image */
     cv::Mat *mat;
     UvcCamera::FrameData *frame_data; /* actually needed? TODO */
     uint8_t *y_data;
@@ -84,6 +88,63 @@ typedef struct {
 // TODO - where to parse from calib.txt
 double kFocalLengthPX = 718.8560;
 cv::Point2d kPrinciplePointPX(607.1928, 185.2157);
+
+void featureDetection(const Mat &img_1, vector<Point2f> &points1)	{   //uses FAST as of now, modify parameters as necessary
+	vector<KeyPoint> keypoints_1;
+	int fast_threshold = 20;
+	bool nonmaxSuppression = true;
+	FAST(img_1, keypoints_1, fast_threshold, nonmaxSuppression);
+	KeyPoint::convert(keypoints_1, points1, vector<int>());
+}
+
+void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &points1, vector<Point2f> &points2)	{
+	vector<float> err;
+	Size winSize = Size(21, 21);
+	TermCriteria termcrit = TermCriteria(TermCriteria::COUNT+TermCriteria::EPS, 30, 0.01);
+	std::vector<uchar> status;
+	std::vector<cv::Point2f> points;
+
+	calcOpticalFlowPyrLK(img1, img2, points1, points2, status, err, winSize, 3, termcrit, 0, 0.001);
+
+	size_t n = status.size();
+	points2.clear();
+	points2.reserve(n);
+	std::vector<uchar>::const_iterator it_status, last_status = status.end();
+	std::vector<cv::Point2f>::const_iterator it_point = points.begin(); /* points and status have same size */
+	if (points.size() != n) { printf("mismatch between points and status\n"); return; }
+
+	unsigned int index = 0;
+	for (it_status = status.begin(); it_status != last_status; ++it_status, ++it_point, ++index) {
+		bool remove = (*it_status == 0) || (it_point->x < 0) || (it_point->y < 0);
+		if (remove == false) {
+			points2.push_back(points1.at(index));
+		}
+	}
+
+#if 0
+	size_t n_1 = points1.size();
+	size_t n_2 = points2.size();
+	size_t n_s = status.size();
+
+	printf("the ns are %zu, %zu, %zu\n", n_1, n_2, n_s);
+
+	//getting rid of points for which the KLT tracking failed or those who have gone outside the frame
+	int indexCorrection = 0;
+	for( int i=0; i<status.size(); i++)
+	{  Point2f pt = points2.at(i- indexCorrection);
+		if ((status.at(i) == 0)||(pt.x<0)||(pt.y<0))	{
+			if((pt.x<0)||(pt.y<0))	{
+				status.at(i) = 0;
+			}
+			points1.erase (points1.begin() + (i - indexCorrection));
+			points2.erase (points2.begin() + (i - indexCorrection));
+			indexCorrection++;
+		}
+	}
+#endif
+
+}
+
 
 int main(int argc, char **argv) {
 
@@ -218,7 +279,8 @@ void *camera_looper(void *ext) {
         frame_data->frame_data->index = InvalidCameraFrameIndex;
         frame_data->y_data = new uint8_t [n_pixels];
         frame_data->mat = new cv::Mat(camera->height, camera->width, CV_8UC1, frame_data->y_data);
-        frame_data->features = new std::vector<cv::Point2f>(MaximumTypicalFeatures);
+        frame_data->eigen_features = new std::vector<cv::Point2f>(MaximumTypicalFeatures);
+        frame_data->track_features = new std::vector<cv::Point2f>(MaximumTypicalFeatures);
 	}
 
 	while (*thread_params->run != 0) {
@@ -272,7 +334,6 @@ void *camera_looper(void *ext) {
 void *analysis_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
 	unsigned int n_frames = 0;
-	std::vector<uchar> status;
     while (*thread_params->run != 0) {
         unsigned int room = (thread_params->frame_data_head - thread_params->frame_data_tail) % thread_params->frame_data_mask;
         // if (room < KeepHistory) { usleep(1000); continue; }
@@ -280,8 +341,9 @@ void *analysis_looper(void *ext) {
 
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
         const cv::Mat &current_image = *frame_data->mat;
-        // TODO necessary? frame_data->features->clear(); /* reset vector */
-        featureDetection(current_image, *frame_data->features);
+        // TODO necessary? frame_data->eigen_features->clear(); /* reset vector */
+        // TODO necessary? frame_data->eigen_features->reserve(); /* reserve space in vector */
+		featureDetection(current_image, *frame_data->eigen_features);
 
         ++n_frames;
 
@@ -290,22 +352,22 @@ void *analysis_looper(void *ext) {
         FrameData *prev_frame_data = thread_params->frame_data_pool[previous_index];
         const cv::Mat &previous_image = *prev_frame_data->mat;
 
-		size_t n_previous_features = prev_frame_data->features->size(), n_current_features = frame_data->features->size();
+		size_t n_previous_features = prev_frame_data->eigen_features->size(), n_current_features = frame_data->eigen_features->size();
 		printf("numbers of features = %zu(%d) / %zu(%d)\n", n_previous_features, previous_index, n_current_features, thread_params->frame_data_tail);
 
 		if (n_frames > 1) { /* we need at least two frames to get the pipeline working */
             cv::Mat mask, R, t;
-            int minimum_feature_set_size = 10;
-            printf("feature set sizes = %zu/%zu\n", prev_frame_data->features->size(), frame_data->features->size());
-            if (frame_data->features->size() >= minimum_feature_set_size) {
-                featureTracking(previous_image, current_image, *prev_frame_data->features, *frame_data->features, status);
-                cv::Mat E = findEssentialMat(*prev_frame_data->features, *frame_data->features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
-                recoverPose(E, *prev_frame_data->features, *frame_data->features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
+            printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
+            bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
+				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
+            stand_chance = false; /* TODO jsv */
+            if (stand_chance) {
+				std::vector<cv::Point2f> *prev_features = prev_frame_data->eigen_features; /* use track_features to replicate current functionality */
+				std::vector<cv::Point2f> *tracked_features = frame_data->track_features;
+				featureTracking(previous_image, current_image, *prev_features, *tracked_features);
+                cv::Mat E = findEssentialMat(*prev_features, *tracked_features, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+                recoverPose(E, *prev_features, *tracked_features, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
             }
-			size_t n_prev_features = prev_frame_data->features->size(), n_curr_features = frame_data->features->size(); /* TODO check again */
-			printf("check numbers of features = %zu / %zu\n", n_prev_features, n_curr_features);
-        } else if (n_frames == 0) {
-			featureDetection(current_image, *frame_data->features);
 		}
 
         if (thread_params->display_busy == false) {
