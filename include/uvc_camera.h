@@ -10,8 +10,6 @@ typedef int (UvcCameraCallbackFxn)(UvcCamera *camera, unsigned char *data, void 
 typedef int (*UvcCameraLogFxn)(int level, const char *str, int length);
 typedef int (*UvcCameraProcessImageFxn)(UvcCamera *camera, const unsigned char *i_img, unsigned char *o_img);
 
-
-
 //R = Y + 1.140V
 //G = Y - 0.395U - 0.581V
 //B = Y + 2.032U
