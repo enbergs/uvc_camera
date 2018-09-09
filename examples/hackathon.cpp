@@ -85,6 +85,9 @@ typedef struct {
 	unsigned int display_index;
 	bool display_busy;
 	bool reverse_image;
+	cv::Mat trajectory_mat;
+	std::string trajectory_window_name;
+	std::string image_window_name;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -209,11 +212,15 @@ int main(int argc, char **argv) {
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->camera = camera;
 	thread_params->reverse_image = reverse_image;
+	thread_params->image_window_name = "main";
+	thread_params->trajectory_window_name = "traj";
+	thread_params->trajectory_mat = cv::Mat(640, 480, CV_8UC1);
 
 	/* sync to camera */
 	width = camera->width;
 	height = camera->height;
-	std::string window_name("main");
+//	std::string window_name(thread_params->image_window_name.c_str());
+//	std::string window_name(thread_params->trajectory_window_name.c_str());
 	initialize_UYVY_to_RGBA();
 
 	int err;
@@ -399,7 +406,12 @@ void *visualization_looper(void *ext) {
         if (thread_params->display_busy == true) {
             FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
             const cv::Mat image = *frame_data->mat;
-            imshow("main", image);
+            std::vector<cv::Point2f>::const_iterator it_feat, it_last = frame_data->eigen_features->end();
+            for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
+            	cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
+            }
+            imshow(thread_params->image_window_name, image);
+            imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
             cv::waitKey(30);
             thread_params->display_busy = false;
         }
