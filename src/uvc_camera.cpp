@@ -24,8 +24,20 @@
 
 #include "uvc_camera.h"
 
+#define USE_OPENCV
+
+#ifdef USE_OPENCV
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <opencv2/opencv.hpp>
+//#include <opencv2/video/tracking.hpp>
+//#include <opencv2/imgproc/imgproc.hpp>
+//#include <opencv2/features2d/features2d.hpp>
+//#include <opencv2/calib3d/calib3d.hpp>
+#endif
+
 /* TODO xioctl macro */
-static int xioctl(int fd, int request, void *arg) {
+static inline int xioctl(int fd, int request, void *arg) {
 #ifdef VERBOSE_DEBUG
     printf("xioctl(fd=%d, request=%d, arg=%p)\n", fd, request, arg);
 #endif
@@ -59,7 +71,21 @@ UvcCamera::UvcCamera(int device_id, uint32_t width, uint32_t height, UvcCameraLo
 }
 
 UvcCamera::UvcCamera(const char *device_id, uint32_t width, uint32_t height, UvcCameraLogFxn log_fxn) {
-    setup(device_id, width, height, log_fxn);
+    if ((width != 0) && (height != 0)) {
+        setup(device_id, width, height, log_fxn);
+    } else if (width == 0) { /* interpret device_id as a video filename */
+        fd = ::open(device_id, O_RDONLY);
+        if (fd == -1) { printf("error opening file [%s] as video\n", device_id); return; }
+        this->width = this->height = 0;
+        this->log_fxn = (log_fxn) ? log_fxn : &defaultLogFxn;
+        verbose = false;
+    } else if (height == 0) { /* interpret device_id as a file with list of images */
+        fd = ::open(device_id, O_RDONLY);
+        if (fd == -1) { printf("error opening file [%s] as image list\n", device_id); return; }
+        this->width = this->height = 0;
+        this->log_fxn = (log_fxn) ? log_fxn : &defaultLogFxn;
+        verbose = false;
+    }
 }
 
 /* at this point: height, width and pixel size are known. init() initializes all buffers and camera parameters.
@@ -377,12 +403,17 @@ void YUV422_to_RGBA(const unsigned char *src, unsigned char *dst, unsigned int w
     }
 }
 
+/* TODO */
 UvcCamera::~UvcCamera() {
 }
 
 int UvcCamera::getFrame(FrameData *frame_data) {
 
     frame_data->index = -9999;
+
+    if (height == 0) {
+
+    }
 
     /* wait for a frame to be ready, by polling */
     fd_set fds;
