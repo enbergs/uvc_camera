@@ -268,12 +268,19 @@ void initialize_UYVY_to_RGBA() {
     }
 }
 
-void yuv422_to_y(const unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height) {
+void yuv422_to_y(const unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height, bool reverse_image) {
     const unsigned char *yuv = src;
     unsigned long int n = width * height;
-    unsigned char *y_dst = dst;
-    for (unsigned long int i = 0; i < n; ++i, yuv += 2) {
-        *y_dst++ = *yuv;
+    if (reverse_image) {
+        unsigned char *y_dst = dst + n;
+        for (unsigned long int i = 0; i < n; ++i, yuv += 2) {
+            *--y_dst = *yuv;
+        }
+    } else {
+        unsigned char *y_dst = dst;
+        for (unsigned long int i = 0; i < n; ++i, yuv += 2) {
+            *y_dst++ = *yuv;
+        }
     }
 }
 

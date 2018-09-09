@@ -83,6 +83,7 @@ typedef struct {
 	FrameData **frame_data_pool;
 	unsigned int display_index;
 	bool display_busy;
+	bool reverse_image;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -145,7 +146,6 @@ void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &po
 
 }
 
-
 int main(int argc, char **argv) {
 
 	char str[1024];
@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
 	int logbuff_length = sizeof(logbuff);
 	int i, nframes = 0, device = -1, compression_scheme = UvcCamera::COMPRESSION_NONE, compression_quality = 0;
 	std::string cfile, ofile, gfile = "gps.log", fourcc = "";
-	bool calibrate = false, display = false, verbose = false;
+	bool calibrate = false, display = false, verbose = false, reverse_image = false;
 	Mat camera_matrix, dist_coeffs;
 
     width = 1920; height = 1080;
@@ -181,6 +181,7 @@ int main(int argc, char **argv) {
 		else if(strcmp(argv[i], "-display") == 0) display = true; 
 //		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-fps") == 0) fps = atoi(argv[++i]);
+		else if(strcmp(argv[i], "-reverse") == 0) reverse_image = true;
 		else if(strcmp(argv[i], "-vga") == 0) {
 			width = 640;
 			height = 480;
@@ -202,6 +203,7 @@ int main(int argc, char **argv) {
 
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->camera = camera;
+	thread_params->reverse_image = reverse_image;
 
 	/* sync to camera */
 	width = camera->width;
@@ -305,7 +307,7 @@ void *camera_looper(void *ext) {
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data); /* grab data */
         if (uvc_frame_index >= 0) {
-            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height); /* convert to grey scale */
+            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height, thread_params->reverse_image); /* convert to grey scale */
             camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
         } else if (uvc_frame_index < 0) {
             printf("TODO error\n");
