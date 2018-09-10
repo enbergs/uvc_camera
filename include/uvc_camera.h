@@ -107,6 +107,7 @@ public:
     int releaseFrame(int index);
     void setFrameTimeout(time_t waitMilliseconds);
     time_t frame_timeout_ms;
+    FILE *fp;
 
 private:
     static int defaultLogFxn(int level, const char *msg, int len);

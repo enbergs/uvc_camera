@@ -98,6 +98,8 @@ typedef struct {
 	unsigned int acc_head;
 	unsigned int acc_tail;
 	unsigned int acc_mask;
+	unsigned int image_height;
+	unsigned int image_width;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -137,13 +139,13 @@ void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &pr
 
 	calcOpticalFlowPyrLK(img1, img2, prev_eigen_features, points, status, err, winSize, 3, termcrit, 0, 0.001);
 
-	double a = distance(prev_eigen_features, points);
-	printf(">>> size of feature set = %zu. distance = %f\n", prev_eigen_features.size(), a);
-	int n_asterisks = floor(a / 10000.0);
-	for (int i = 0; i < n_asterisks; ++i) {
-		printf("*");
-	}
-	printf("\n");
+//	double a = distance(prev_eigen_features, points);
+//	printf(">>> size of feature set = %zu. distance = %f\n", prev_eigen_features.size(), a);
+//	int n_asterisks = floor(a / 10000.0);
+//	for (int i = 0; i < n_asterisks; ++i) {
+//		printf("*");
+//	}
+//	printf("\n");
 
 	size_t n = status.size();
 	prev_tracked_features.clear();
@@ -168,8 +170,8 @@ int main(int argc, char **argv) {
 	char str[1024];
 	char logbuff[1024];
 	int logbuff_length = sizeof(logbuff);
-	int i, nframes = 0, device = -1, compression_scheme = UvcCamera::COMPRESSION_NONE, compression_quality = 0;
-	std::string cfile, ofile, gfile = "gps.log", fourcc = "";
+	int i, nframes = 0, compression_scheme = UvcCamera::COMPRESSION_NONE, compression_quality = 0;
+	std::string ifile, cfile, ofile, gfile = "gps.log", fourcc = "", device;
 	bool calibrate = false, display = false, verbose = false, reverse_image = false;
 	Mat camera_matrix, dist_coeffs;
 
@@ -179,18 +181,18 @@ int main(int argc, char **argv) {
 /* jsv need to implement */
 	int n_output_buffers = 3;
     fps = 30;
-    device = 0;
 
 	for(i=1;i<argc;++i) {
 		if(strcmp(argv[i], "-debug") == 0) debug_mode = true;
 		else if(strcmp(argv[i], "-verbose") == 0) verbose = true;
-		else if(strcmp(argv[i], "--device") == 0) device = atoi(argv[++i]);
-		else if(strcmp(argv[i], "-d") == 0) device = atoi(argv[++i]);
+		else if(strcmp(argv[i], "--device") == 0) device = argv[++i];
+		else if(strcmp(argv[i], "-d") == 0) device = argv[++i];
 		else if(strcmp(argv[i], "--height") == 0) height = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-h") == 0) height = atoi(argv[++i]);
 		else if(strcmp(argv[i], "--width") == 0) width = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-w") == 0) width = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-c") == 0) cfile = argv[++i];
+		else if(strcmp(argv[i], "-i") == 0) ifile = argv[++i];
 		else if(strcmp(argv[i], "--calibrate") == 0) cfile = argv[++i];
 		else if(strcmp(argv[i], "--fourcc") == 0) fourcc = argv[++i];
 		else if(strcmp(argv[i], "-o") == 0) ofile = argv[++i];
@@ -210,12 +212,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	UvcCamera *camera = new UvcCamera(device, width, height, logger);
-	camera->open();
-	camera->frame_timeout_ms = 1000;
-
 	ThreadParams *thread_params = new ThreadParams;
-	thread_params->camera = camera;
 	thread_params->reverse_image = reverse_image;
 	thread_params->image_window_name = "main";
 	thread_params->trajectory_window_name = "traj";
@@ -223,9 +220,30 @@ int main(int argc, char **argv) {
 	thread_params->global_rotation = cv::Mat::eye(3, 3, CV_64FC1);
 	thread_params->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
 
+	if (ifile.length() != 0) {
+		device = ifile;
+		thread_params->image_height = 370;
+		thread_params->image_width = 1226;
+		height = 0;
+		debug_mode = true;
+	} else {
+		thread_params->image_height = height;
+		thread_params->image_width = width;
+		debug_mode = false;
+	}
+
+	UvcCamera *camera = new UvcCamera(device.c_str(), width, height, logger);
+	camera->open();
+	camera->frame_timeout_ms = 1000;
+	thread_params->camera = camera;
+
 	/* sync to camera */
-	width = camera->width;
-	height = camera->height;
+	if (debug_mode == false) {
+		thread_params->image_width = camera->width;
+		thread_params->image_height = camera->height;
+	}
+	width = thread_params->image_width; /* TODO get rid of */
+	height = thread_params->image_height; /* TODO get rid of */
 //	std::string window_name(thread_params->image_window_name.c_str());
 //	std::string window_name(thread_params->trajectory_window_name.c_str());
 	initialize_UYVY_to_RGBA();
@@ -281,7 +299,7 @@ int main(int argc, char **argv) {
 void *camera_looper(void *ext) {
 	ThreadParams *thread_params = (ThreadParams *) ext;
 	UvcCamera *camera = thread_params->camera;
-	unsigned long int n_pixels = camera->width * camera->height;
+	unsigned long int n_pixels = thread_params->image_width * thread_params->image_height;
 
 	/* allocate what all you need */
 	thread_params->frame_data_size = 8;
@@ -293,10 +311,10 @@ void *camera_looper(void *ext) {
 		thread_params->frame_data_pool[i] = new FrameData;
         FrameData *frame_data = thread_params->frame_data_pool[i];
 		frame_data->frame_data = new UvcCamera::FrameData;
-        frame_data->frame_data->payload = new uint8_t [2 * n_pixels]; /* 2 bytes per pixel in yuyv */
+        frame_data->frame_data->payload = new uint8_t [4 * n_pixels]; /* 2 bytes per pixel in yuyv. overkill TODO? */
         frame_data->frame_data->index = InvalidCameraFrameIndex;
         frame_data->y_data = new uint8_t [n_pixels];
-        frame_data->mat = new cv::Mat(camera->height, camera->width, CV_8UC1, frame_data->y_data);
+        frame_data->mat = new cv::Mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->y_data);
         frame_data->eigen_features = new std::vector<cv::Point2f>;
         frame_data->eigen_features->reserve(MaximumTypicalFeatures);
         frame_data->track_fwd_features = new std::vector<cv::Point2f>;
@@ -327,9 +345,14 @@ void *camera_looper(void *ext) {
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data); /* grab data */
         if (uvc_frame_index >= 0) {
-            yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, width, height, thread_params->reverse_image); /* convert to grey scale */
-            camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
+        	if (debug_mode) {
+				memcpy(frame_data->y_data, frame_data->frame_data->payload, camera->width * camera->height);
+        	} else {
+				yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, camera->width, camera->height, thread_params->reverse_image); /* convert to grey scale */
+			}
+			camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
         } else if (uvc_frame_index < 0) {
+        	*thread_params->run = 0;
             printf("TODO error\n");
         }
 
@@ -438,9 +461,10 @@ void *visualization_looper(void *ext) {
             FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
             const cv::Mat image = *frame_data->mat;
             std::vector<cv::Point2f>::const_iterator it_feat, it_last = frame_data->eigen_features->end();
-            for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
-            	cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
-            }
+// uncomment to display features
+//            for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
+//            	cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
+//            }
             imshow(thread_params->image_window_name, image);
 
             cv::Point2i center;

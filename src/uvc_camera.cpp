@@ -30,6 +30,7 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/opencv.hpp>
+#include <uvc_camera.h>
 //#include <opencv2/video/tracking.hpp>
 //#include <opencv2/imgproc/imgproc.hpp>
 //#include <opencv2/features2d/features2d.hpp>
@@ -56,6 +57,7 @@ void UvcCamera::setup(const char *device_id, uint32_t width, uint32_t height, Uv
     this->log_fxn = (log_fxn) ? log_fxn : &defaultLogFxn;
     verbose = false;
     frame_timeout_ms = 0;
+    fp = 0;
 }
 
 int UvcCamera::defaultLogFxn(int level, const char *msg, int len) {
@@ -80,9 +82,9 @@ UvcCamera::UvcCamera(const char *device_id, uint32_t width, uint32_t height, Uvc
         this->log_fxn = (log_fxn) ? log_fxn : &defaultLogFxn;
         verbose = false;
     } else if (height == 0) { /* interpret device_id as a file with list of images */
-        fd = ::open(device_id, O_RDONLY);
-        if (fd == -1) { printf("error opening file [%s] as image list\n", device_id); return; }
+        fp = fopen(device_id, "r");
         this->width = this->height = 0;
+        if (fp == NULL) { printf("error opening file [%s] as image list\n", device_id); return; }
         this->log_fxn = (log_fxn) ? log_fxn : &defaultLogFxn;
         verbose = false;
     }
@@ -92,6 +94,10 @@ UvcCamera::UvcCamera(const char *device_id, uint32_t width, uint32_t height, Uvc
  * user must call start_capture() and stop_capture() to start and stop streaming from camera.
    complement of this function is close() which should be called when camera will no longer be used */
 int UvcCamera::open(int n_capture_buffers, uint32_t pixel_format) {
+
+    if (fp != 0) {
+        return 0;
+    }
 
     if (pixel_format == 0) { pixel_format = V4L2_PIX_FMT_YUYV; }
 
@@ -411,8 +417,35 @@ int UvcCamera::getFrame(FrameData *frame_data) {
 
     frame_data->index = -9999;
 
-    if (height == 0) {
+    if (fp != 0) {
+        char *filename = NULL;
+        size_t len = 0;
+        ssize_t nread;
+        nread = getline(&filename, &len, fp);
+        if (nread < 0) {
+            return -1;
+        }
+        if (filename[nread - 1] == '\n' || filename[nread - 1] == '\r') {
+            filename[nread - 1] = 0;
+        }
+        cv::Mat currImage_c = cv::imread(filename);
 
+        // cv::imshow("blah", currImage_c);
+        // cv::waitKey(0);
+
+        cv::Mat currImage_g;
+        cvtColor(currImage_c, currImage_g, cv::COLOR_BGR2GRAY);
+
+        // if (frame_data->payload != 0) { delete [] frame_data->payload; }
+
+        unsigned int rows = currImage_c.rows, cols = currImage_c.cols, chans = currImage_c.channels();
+        height = rows;
+        width = cols;
+        // frame_data->payload = new uint8_t [chans * rows * cols];
+        memcpy(frame_data->payload, currImage_g.data, rows * cols);
+
+        free(filename);
+        return 0; /* always index = 0 in debug mode */
     }
 
     /* wait for a frame to be ready, by polling */
@@ -460,6 +493,11 @@ int UvcCamera::getFrame(FrameData *frame_data) {
 }
 
 int UvcCamera::releaseFrame(int index) {
+
+    if (fp != 0) {
+        return 0;
+    }
+
     struct v4l2_buffer buf;
     memset(&buf, 0, sizeof(struct v4l2_buffer));
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -473,6 +511,12 @@ int UvcCamera::releaseFrame(int index) {
 }
 
 int UvcCamera::close() {
+
+    if (fp != 0) {
+        fclose(fp);
+        fp = 0;
+        return 0;
+    }
 
     for (unsigned int i=0;i<n_capture_buffers;++i) {
         size_t n_bytes = snprintf(log_buffer, log_buffer_size, "buffer %d munmap(%p, %d)", i, capture_buffer[i], capture_length[i]);
