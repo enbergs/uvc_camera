@@ -30,6 +30,9 @@
 
 #include <uvc_camera.h>
 
+#include "process_frame.h"
+#include "demo.h"
+
 using namespace cv;
 using namespace std;
 
@@ -102,6 +105,8 @@ typedef struct {
 	unsigned int image_width;
 	unsigned int trajectory_image_height;
 	unsigned int trajectory_image_width;
+	ProcessFrame *process_frame;
+	Demo *demo;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -214,6 +219,9 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	ProcessFrame processFrame;
+	Demo demo;
+
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->reverse_image = reverse_image;
 	thread_params->image_window_name = "main";
@@ -221,6 +229,8 @@ int main(int argc, char **argv) {
 	thread_params->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
 	thread_params->trajectory_image_height = 1400;
 	thread_params->trajectory_image_width = 1200;
+	thread_params->process_frame = &processFrame;
+	thread_params->demo = &demo;
 
 	if (ifile.length() != 0) {
 		device = ifile;
@@ -327,6 +337,8 @@ void *camera_looper(void *ext) {
         frame_data->track_rev_features->reserve(MaximumTypicalFeatures);
 	}
 
+	int n_frames = 0;
+
 	while (*thread_params->run != 0) {
 
         /* do not potentially overwrite currently accessed data. need to keep a few frames of history in queue */
@@ -351,8 +363,26 @@ void *camera_looper(void *ext) {
         if (uvc_frame_index >= 0) {
         	if (debug_mode) {
 				memcpy(frame_data->y_data, frame_data->frame_data->payload, camera->width * camera->height);
+				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
+				if (n_frames == 0) {
+					printf("thread_params->process_frame->init(mat)\n");
+					thread_params->process_frame->init(mat);
+				} else {
+					printf("thread_params->process_frame->processImage(mat)\n");
+					thread_params->process_frame->processImage(mat);
+				}
+				++n_frames;
         	} else {
 				yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, camera->width, camera->height, thread_params->reverse_image); /* convert to grey scale */
+				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
+				if (n_frames == 0) {
+					printf("thread_params->process_frame->init(mat)\n");
+					thread_params->process_frame->init(mat);
+				} else {
+					printf("thread_params->process_frame->processImage(mat)\n");
+					thread_params->process_frame->processImage(mat);
+				}
+				++n_frames;
 			}
 			camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
         } else if (uvc_frame_index < 0) {
@@ -410,7 +440,7 @@ void *analysis_looper(void *ext) {
             // printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
             bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
 				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
-            stand_chance = true; /* TODO */
+            stand_chance = false; /* TODO */
             if (stand_chance) {
 				std::vector<cv::Point2f> *prev_track = prev_frame_data->track_fwd_features; /* use track_features to replicate current functionality */
 				std::vector<cv::Point2f> *next_track = frame_data->track_rev_features;
@@ -461,30 +491,53 @@ void *analysis_looper(void *ext) {
 void *visualization_looper(void *ext) {
     ThreadParams *thread_params = (ThreadParams *) ext;
     thread_params->display_busy = false;
+    int n_frames = 0;
     while (*thread_params->run != 0) {
         if (thread_params->display_busy == true) {
-            FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
-            const cv::Mat image = *frame_data->mat;
-            std::vector<cv::Point2f>::const_iterator it_feat, it_last = frame_data->eigen_features->end();
-// uncomment to display features
-//            for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
-//            	cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
-//            }
-            imshow(thread_params->image_window_name, image);
 
-            cv::Point2i center;
+        	printf("visualization %d\n", n_frames);
 
-            double x = thread_params->global_translation.at<double>(0);
-            double y = thread_params->global_translation.at<double>(1);
-            double z = thread_params->global_translation.at<double>(2);
-            printf("translation = (%f, %f, %f)\n", x, y, z);
+        	if (n_frames > 0 && thread_params->process_frame->initialized_bool_ && thread_params->process_frame->ready_for_scale_) {
+				FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
+				const cv::Mat image = *frame_data->mat;
 
-            center.x = (int) (x + thread_params->trajectory_image_width / 2);
-            center.y = (int) (z + thread_params->trajectory_image_height / 2);
-            cv::circle(thread_params->trajectory_mat, center, 4, cv::Scalar(255, 0, 0), 1);
+#if 0
+				std::vector<cv::Point2f>::const_iterator it_feat, it_last = frame_data->eigen_features->end();
+				for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
+					cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
+				}
+				imshow(thread_params->image_window_name, image);
+#endif
 
-            imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
-            cv::waitKey(30);
+				cv::Mat t_f_curr = thread_params->process_frame->getTopFrameInfo(1).g_t;
+				cv::Mat t_f_prev = thread_params->process_frame->getTopFrameInfo(2).g_t;
+
+				thread_params->demo->showImage(image);
+				thread_params->demo->showTraj(t_f_curr, t_f_prev);
+
+				char key = cvWaitKey(10);
+
+				if (key == 27) {
+					break;
+				}
+
+#if 0
+				cv::Point2i center;
+
+				double x = thread_params->global_translation.at<double>(0);
+				double y = thread_params->global_translation.at<double>(1);
+				double z = thread_params->global_translation.at<double>(2);
+				printf("translation = (%f, %f, %f)\n", x, y, z);
+
+				center.x = (int) (x + thread_params->trajectory_image_width / 2);
+				center.y = (int) (z + thread_params->trajectory_image_height / 2);
+				cv::circle(thread_params->trajectory_mat, center, 4, cv::Scalar(255, 0, 0), 1);
+
+				imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
+				cv::waitKey(30);
+#endif
+			}
+			++n_frames;
             thread_params->display_busy = false;
         }
     }
