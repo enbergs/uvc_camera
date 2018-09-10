@@ -88,6 +88,8 @@ typedef struct {
 	cv::Mat trajectory_mat;
 	std::string trajectory_window_name;
 	std::string image_window_name;
+	cv::Mat global_rotation;
+	cv::Mat global_translation;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -215,6 +217,8 @@ int main(int argc, char **argv) {
 	thread_params->image_window_name = "main";
 	thread_params->trajectory_window_name = "traj";
 	thread_params->trajectory_mat = cv::Mat(640, 480, CV_8UC1);
+	thread_params->global_rotation = cv::Mat::eye(3, 3, CV_64FC1);
+	thread_params->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
 
 	/* sync to camera */
 	width = camera->width;
@@ -375,7 +379,7 @@ void *analysis_looper(void *ext) {
 		printf("numbers of features = %zu(%d) / %zu(%d)\n", n_previous_features, previous_index, n_current_features, thread_params->frame_data_tail);
 
 		if (n_frames > 1) { /* we need at least two frames to get the pipeline working */
-            cv::Mat mask, R, t;
+            cv::Mat mask, relative_rotation, relative_translation;
             printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
             bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
 				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
@@ -385,8 +389,35 @@ void *analysis_looper(void *ext) {
 				size_t n1 = prev_track->size(), n2 = prev_frame_data->eigen_features->size(), n3 = prev_frame_data->track_fwd_features->size(), n4 = frame_data->track_fwd_features->size();
 				featureTracking(previous_image, current_image, *frame_data->eigen_features, *prev_track, *next_track);
                 cv::Mat E = findEssentialMat(*prev_track, *next_track, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
-                recoverPose(E, *prev_track, *next_track, R, t, kFocalLengthPX, kPrinciplePointPX, mask);
-            }
+                recoverPose(E, *prev_track, *next_track, relative_rotation, relative_translation, kFocalLengthPX, kPrinciplePointPX, mask);
+
+#if 0
+
+                double m[3][3];
+				double t[3];
+				printf("****** ******\nrelative rotation = \n");
+                for (unsigned int i = 0; i < 3; ++i) {
+                	for (unsigned int j = 0; j < 3; ++j) {
+                		m[i][j] = relative_rotation.at<double>(i, j);
+                	}
+                	t[i] = relative_translation.at<double>(i);
+                	printf("\t%12.8f     %12.8f     %12.8f\n", m[i][0], m[i][1], m[i][2]);
+                }
+
+				printf("****** ******\nrelative translation = \n");
+				printf("\t%12.8f     %12.8f     %12.8f\n", t[0], t[1], t[2]);
+
+#endif
+
+                double scale = 1.0; /* shukui TODO */
+
+				cv::Mat translation = cv::Mat(3, 1, CV_64FC1);
+				cv::Mat rotation = cv::Mat(3, 3, CV_64FC1);
+				translation = scale * (thread_params->global_rotation * relative_translation) + thread_params->global_translation;
+				rotation = thread_params->global_rotation * relative_rotation;
+				thread_params->global_rotation = rotation;
+				thread_params->global_translation = translation;
+			}
 		}
 
         if (thread_params->display_busy == false) {
@@ -411,6 +442,18 @@ void *visualization_looper(void *ext) {
             	cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
             }
             imshow(thread_params->image_window_name, image);
+
+            cv::Point2i center;
+
+            double x = thread_params->global_translation.at<double>(0);
+            double y = thread_params->global_translation.at<double>(1);
+            double z = thread_params->global_translation.at<double>(2);
+            printf("translation = (%f, %f, %f)\n", x, y, z);
+
+            center.x = (int) x + 320; /* TODO */
+            center.y = (int) y + 240; /* TODO */
+            cv::circle(thread_params->trajectory_mat, center, 4, cv::Scalar(255, 0, 0), 1);
+
             imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
             cv::waitKey(30);
             thread_params->display_busy = false;
