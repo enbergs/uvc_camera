@@ -100,6 +100,8 @@ typedef struct {
 	unsigned int acc_mask;
 	unsigned int image_height;
 	unsigned int image_width;
+	unsigned int trajectory_image_height;
+	unsigned int trajectory_image_width;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -215,10 +217,10 @@ int main(int argc, char **argv) {
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->reverse_image = reverse_image;
 	thread_params->image_window_name = "main";
-	thread_params->trajectory_window_name = "traj";
-	thread_params->trajectory_mat = cv::Mat(640, 480, CV_8UC1);
 	thread_params->global_rotation = cv::Mat::eye(3, 3, CV_64FC1);
 	thread_params->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
+	thread_params->trajectory_image_height = 1400;
+	thread_params->trajectory_image_width = 1200;
 
 	if (ifile.length() != 0) {
 		device = ifile;
@@ -244,6 +246,8 @@ int main(int argc, char **argv) {
 	}
 	width = thread_params->image_width; /* TODO get rid of */
 	height = thread_params->image_height; /* TODO get rid of */
+	thread_params->trajectory_window_name = "traj";
+	thread_params->trajectory_mat = cv::Mat(thread_params->trajectory_image_height, thread_params->trajectory_image_width, CV_8UC3);
 //	std::string window_name(thread_params->image_window_name.c_str());
 //	std::string window_name(thread_params->trajectory_window_name.c_str());
 	initialize_UYVY_to_RGBA();
@@ -406,10 +410,11 @@ void *analysis_looper(void *ext) {
             // printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
             bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
 				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
+            stand_chance = true; /* TODO */
             if (stand_chance) {
 				std::vector<cv::Point2f> *prev_track = prev_frame_data->track_fwd_features; /* use track_features to replicate current functionality */
 				std::vector<cv::Point2f> *next_track = frame_data->track_rev_features;
-				size_t n1 = prev_track->size(), n2 = prev_frame_data->eigen_features->size(), n3 = prev_frame_data->track_fwd_features->size(), n4 = frame_data->track_fwd_features->size();
+				// size_t n1 = prev_track->size(), n2 = prev_frame_data->eigen_features->size(), n3 = prev_frame_data->track_fwd_features->size(), n4 = frame_data->track_fwd_features->size();
 				featureTracking(previous_image, current_image, *frame_data->eigen_features, *prev_track, *next_track);
                 cv::Mat E = findEssentialMat(*prev_track, *next_track, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
                 recoverPose(E, *prev_track, *next_track, relative_rotation, relative_translation, kFocalLengthPX, kPrinciplePointPX, mask);
@@ -474,8 +479,8 @@ void *visualization_looper(void *ext) {
             double z = thread_params->global_translation.at<double>(2);
             printf("translation = (%f, %f, %f)\n", x, y, z);
 
-            center.x = (int) x + 320; /* TODO */
-            center.y = (int) y + 240; /* TODO */
+            center.x = (int) (x + thread_params->trajectory_image_width / 2);
+            center.y = (int) (z + thread_params->trajectory_image_height / 2);
             cv::circle(thread_params->trajectory_mat, center, 4, cv::Scalar(255, 0, 0), 1);
 
             imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
