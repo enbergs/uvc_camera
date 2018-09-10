@@ -1,6 +1,7 @@
 #include "demo.h"
 
-void Demo::initWindows() {
+void Demo::initWindows(double display_factor) {
+    this->display_factor = display_factor;
     cv::namedWindow(image_stream_str, cv::WINDOW_AUTOSIZE); // Create a window for display.
     cv::namedWindow(trajectory_str, cv::WINDOW_AUTOSIZE); // Create a window for display.
 }
@@ -12,7 +13,7 @@ void Demo::showTraj(const cv::Mat &coord_curr, const cv::Mat &coord_prev) {
     computeCoordInImage(coord_curr, &x_curr, &y_curr);
     computeCoordInImage(coord_prev, &x_prev, &y_prev);
 
-    circle(traj, cv::Point(x_prev, y_prev), 2, CV_RGB(0, 0, 0), 4);
+    // circle(traj, cv::Point(x_prev, y_prev), 2, CV_RGB(0, 0, 0), 4);
     circle(traj, cv::Point(x_prev, y_prev), 2, CV_RGB(255, 0, 0), 4);
 
     circle(traj, cv::Point(x_curr, y_curr), 2, CV_RGB(255, 255, 255), 4);
@@ -32,6 +33,6 @@ void Demo::showImage(const cv::Mat &img) {
 }
 
 void Demo::computeCoordInImage(const cv::Mat &t_f, int *x, int *y) {
-    *x = int(t_f.at<double>(0)) + image_width / 2;
-    *y = int(t_f.at<double>(2)) + image_height / 2;
+    *x = int(t_f.at<double>(0)) * display_factor + image_width / 2;
+    *y = int(t_f.at<double>(2)) * display_factor + image_height / 2;
 }

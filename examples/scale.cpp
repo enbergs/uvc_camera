@@ -10,11 +10,13 @@ double computeRelativeScaleFromLast3Tracks(
 
     const size_t track_size = feature_track_last_3_positions.size();
     // make sure # of feature tracks is not very few
-    assert(track_size >= 3);
+
+    if (track_size < 3) { return 1.0; } /* TODO used to be assert() */
 
     // collection of ratios to find the median as relative scale
     std::vector<double> all_ratio;
 
+    double acc1 = 0.0;
     for (size_t i = 0; i < track_size - 1; i++) {
         double curr_ratio = computeCurrRatio(feature_track_last_3_positions[i],
                                              feature_track_last_3_positions[i + 1],
@@ -26,15 +28,29 @@ double computeRelativeScaleFromLast3Tracks(
             continue;
         }
         all_ratio.push_back(curr_ratio);
+        acc1 += curr_ratio;
     }
+    size_t acc0 = all_ratio.size();
+    double mean = (acc0 != 0) ? (acc1 / acc0) : 1.0;
+    // return (acc0 > 0) ? (acc1 / acc0) : 1.0;
 
+#if 1
     // todo: have the median more efficiently
     std::sort(all_ratio.begin(), all_ratio.end());
 
     // totally have "track_size -1" ratios to work on
-    size_t m = (all_ratio.size() - 1) / 2;
+    size_t all_ratio_size = all_ratio.size();
+    size_t m = (all_ratio_size) / 2;
 
-    return ((all_ratio.size() - 1) % 2 == 0) ? (all_ratio[m] + all_ratio[m - 1]) / 2.0 : all_ratio[m];
+    if (all_ratio_size < 3) { return mean; }
+
+    double median = (all_ratio.size() % 2 == 0) ? (all_ratio[m] + all_ratio[m - 1]) / 2.0 : all_ratio[m];
+
+    printf("mean = %f. median = %f. rel diff = %f\n", mean, median, 0.5 * (mean - median) / (mean + median));
+
+    return median;
+#endif
+
 }
 
 

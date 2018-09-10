@@ -15,13 +15,15 @@ class Demo {
     int image_width = 1200;
     int image_height = 1400;
 
+    double display_factor;
+
     char text[200];
 
     cv::Mat traj = cv::Mat::zeros(image_width, image_height, CV_8UC3);
 
 public:
 
-    void initWindows();
+    void initWindows(double display_factor = 1.0);
 
     void showTraj(const cv::Mat &coord_curr, const cv::Mat &coord_prev);
 

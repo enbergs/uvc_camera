@@ -181,6 +181,7 @@ int main(int argc, char **argv) {
 	std::string ifile, cfile, ofile, gfile = "gps.log", fourcc = "", device;
 	bool calibrate = false, display = false, verbose = false, reverse_image = false;
 	Mat camera_matrix, dist_coeffs;
+	double display_factor = 1.0;
 
     width = 1920; height = 1080;
 	width = 1280; height = 960;
@@ -198,6 +199,7 @@ int main(int argc, char **argv) {
 		else if(strcmp(argv[i], "-h") == 0) height = atoi(argv[++i]);
 		else if(strcmp(argv[i], "--width") == 0) width = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-w") == 0) width = atoi(argv[++i]);
+		else if(strcmp(argv[i], "-factor") == 0) display_factor = atof(argv[++i]);
 		else if(strcmp(argv[i], "-c") == 0) cfile = argv[++i];
 		else if(strcmp(argv[i], "-i") == 0) ifile = argv[++i];
 		else if(strcmp(argv[i], "--calibrate") == 0) cfile = argv[++i];
@@ -221,6 +223,7 @@ int main(int argc, char **argv) {
 
 	ProcessFrame processFrame;
 	Demo demo;
+	demo.initWindows(display_factor);
 
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->reverse_image = reverse_image;
@@ -369,27 +372,10 @@ void *camera_looper(void *ext) {
         if (uvc_frame_index >= 0) {
         	if (debug_mode) {
 				memcpy(frame_data->y_data, frame_data->frame_data->payload, camera->width * camera->height);
-//				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
-//				if (n_frames == 0) {
-//					printf("thread_params->process_frame->init(mat)\n");
-//					thread_params->process_frame->init(mat);
-//				} else {
-//					printf("thread_params->process_frame->processImage(mat)\n");
-//					thread_params->process_frame->processImage(mat);
-//				}
-				++n_frames;
         	} else {
 				yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, camera->width, camera->height, thread_params->reverse_image); /* convert to grey scale */
-//				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
-//				if (n_frames == 0) {
-//					printf("thread_params->process_frame->init(mat)\n");
-//					thread_params->process_frame->init(mat);
-//				} else {
-//					printf("thread_params->process_frame->processImage(mat)\n");
-//					thread_params->process_frame->processImage(mat);
-//				}
-				++n_frames;
 			}
+			++n_frames;
 			camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
         } else if (uvc_frame_index < 0) {
         	*thread_params->run = 0;
