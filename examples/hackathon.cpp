@@ -359,29 +359,35 @@ void *camera_looper(void *ext) {
 	    }
 
 	    FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_head];
+	    if (debug_mode) {
+	    	if (thread_params->frame_data_head != thread_params->frame_data_tail) {
+	    		usleep(1000);
+				continue;
+	    	}
+	    }
 		int uvc_frame_index = camera->getFrame(frame_data->frame_data); /* grab data */
         if (uvc_frame_index >= 0) {
         	if (debug_mode) {
 				memcpy(frame_data->y_data, frame_data->frame_data->payload, camera->width * camera->height);
-				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
-				if (n_frames == 0) {
-					printf("thread_params->process_frame->init(mat)\n");
-					thread_params->process_frame->init(mat);
-				} else {
-					printf("thread_params->process_frame->processImage(mat)\n");
-					thread_params->process_frame->processImage(mat);
-				}
+//				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
+//				if (n_frames == 0) {
+//					printf("thread_params->process_frame->init(mat)\n");
+//					thread_params->process_frame->init(mat);
+//				} else {
+//					printf("thread_params->process_frame->processImage(mat)\n");
+//					thread_params->process_frame->processImage(mat);
+//				}
 				++n_frames;
         	} else {
 				yuv422_to_y(frame_data->frame_data->payload, frame_data->y_data, camera->width, camera->height, thread_params->reverse_image); /* convert to grey scale */
-				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
-				if (n_frames == 0) {
-					printf("thread_params->process_frame->init(mat)\n");
-					thread_params->process_frame->init(mat);
-				} else {
-					printf("thread_params->process_frame->processImage(mat)\n");
-					thread_params->process_frame->processImage(mat);
-				}
+//				cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
+//				if (n_frames == 0) {
+//					printf("thread_params->process_frame->init(mat)\n");
+//					thread_params->process_frame->init(mat);
+//				} else {
+//					printf("thread_params->process_frame->processImage(mat)\n");
+//					thread_params->process_frame->processImage(mat);
+//				}
 				++n_frames;
 			}
 			camera->releaseFrame(uvc_frame_index); /* let camera buffers go back into pool */
@@ -391,7 +397,7 @@ void *camera_looper(void *ext) {
         }
 
 		/* wrap up loop */
-        thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
+		thread_params->frame_data_head = (thread_params->frame_data_head + 1) & thread_params->frame_data_mask;
 	}
 
 	/* clean up; free resources */
@@ -420,12 +426,23 @@ void *analysis_looper(void *ext) {
 
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
         const cv::Mat &current_image = *frame_data->mat;
+
+		// cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
+		if (n_frames == 0) {
+			printf("thread_params->process_frame->init(mat)\n");
+			thread_params->process_frame->init(current_image);
+		} else {
+			printf("thread_params->process_frame->processImage(mat)\n");
+			thread_params->process_frame->processImage(current_image);
+		}
+
+		++n_frames;
+
+#if 0
         // TODO necessary? frame_data->eigen_features->clear(); /* reset vector */
         // TODO necessary? frame_data->eigen_features->reserve(); /* reserve space in vector */
 		featureDetection(current_image, *frame_data->eigen_features);
 		*frame_data->track_fwd_features = *frame_data->eigen_features;
-
-        ++n_frames;
 
         /* fetch previous frame */
         unsigned int previous_index = (thread_params->frame_data_tail - 1) & thread_params->frame_data_mask;
@@ -475,8 +492,10 @@ void *analysis_looper(void *ext) {
 				rotation = thread_params->global_rotation * relative_rotation;
 				thread_params->global_rotation = rotation;
 				thread_params->global_translation = translation;
+
 			}
 		}
+#endif
 
         if (thread_params->display_busy == false) {
             thread_params->display_index = thread_params->frame_data_tail;

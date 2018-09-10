@@ -30,7 +30,7 @@ public:
     bool initialized_bool_ = false;
     bool ready_for_scale_ = false;
 
-    void init(cv::Mat &img);
+    void init(const cv::Mat &img);
 
     void setScale(const double scale);
 

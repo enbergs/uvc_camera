@@ -1,7 +1,7 @@
 #include "process_frame.h"
 
 
-void ProcessFrame::init(cv::Mat &img) {
+void ProcessFrame::init(const cv::Mat &img) {
 
     // first image, only detect features_detected, no feature tracking process
     std::vector<cv::Point2f> feature_points_detected;
@@ -111,6 +111,8 @@ void ProcessFrame::processImage(const cv::Mat &img_curr) {
         t_curr = scale_abs_ * (frame_info_prev.g_R * t_) + frame_info_prev.g_t;
         R_curr = frame_info_prev.g_R * R_;
     } else {
+        t_curr = cv::Mat::zeros(3, 1, CV_64FC1);
+        R_curr = cv::Mat::eye(3, 3, CV_64FC1);
         std::cout << "scale below 0.1, or incorrect translation" << std::endl;
     }
 
