@@ -43,13 +43,20 @@ void ProcessFrame::processImage(const cv::Mat &img_curr) {
 
     if (stand_chance) {
         Features::featureTracking(frame_info_prev.img, img_curr, &frame_info_prev.features_detected, &feature_points_matched_curr, &status);
-        E_mat_ = findEssentialMat(frame_info_prev.features_detected,
-            feature_points_matched_curr,
-            kFocalLengthPX,
-            kPrinciplePointPX,
-            cv::RANSAC, 0.999, 1.0, mask_);
-        recoverPose(E_mat_, frame_info_prev.features_detected, feature_points_matched_curr, R_, t_, kFocalLengthPX, kPrinciplePointPX,
-            mask_);
+        bool stand_chance = (frame_info_prev.features_detected.size() > min_features);
+        if (stand_chance) {
+            E_mat_ = findEssentialMat(frame_info_prev.features_detected,
+                feature_points_matched_curr,
+                kFocalLengthPX,
+                kPrinciplePointPX,
+                cv::RANSAC, 0.999, 1.0, mask_);
+            recoverPose(E_mat_, frame_info_prev.features_detected, feature_points_matched_curr, R_, t_, kFocalLengthPX, kPrinciplePointPX,
+                mask_);
+        } else {
+            R_ = cv::Mat::eye(3, 3, CV_64FC1);
+            t_ = cv::Mat::zeros(3, 1, CV_64FC1);
+            printf("we did not stand a chance again ******************************************************\n");
+        }
     } else {
         R_ = cv::Mat::eye(3, 3, CV_64FC1);
         t_ = cv::Mat::zeros(3, 1, CV_64FC1);

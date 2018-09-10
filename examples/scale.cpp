@@ -70,26 +70,37 @@ double computeCurrRatio(const std::vector<Eigen::Vector2d> &last3_positions_feat
                                                                          last3_positions_feature1[0],
                                                                          last3_positions_feature1[1]);
 
+    bool ok = (c1_p_f1.norm() > 0.0);
+
     Eigen::Vector3d c1_p_f2 = triangulateWithRelativePoseUnitTranslation(c2_R_c1_prev,
                                                                          unit_c2_p_c1_prev,
                                                                          last3_positions_feature2[0],
                                                                          last3_positions_feature2[1]);
+    ok = ok & (c1_p_f2.norm() > 0.0);
 
     Eigen::Vector3d c2_p_f1 = triangulateWithRelativePoseUnitTranslation(c2_R_c1_curr,
                                                                          unit_c2_p_c1_curr,
                                                                          last3_positions_feature1[1],
                                                                          last3_positions_feature1[2]);
+    ok = ok & (c2_p_f1.norm() > 0.0);
 
     Eigen::Vector3d c2_p_f2 = triangulateWithRelativePoseUnitTranslation(c2_R_c1_curr,
                                                                          unit_c2_p_c1_curr,
                                                                          last3_positions_feature2[1],
                                                                          last3_positions_feature2[2]);
-    // compute the relative_scale according to the distance (norm) ratio
+    ok = ok & (c2_p_f2.norm() > 0.0);
+
     double norm1 = (c1_p_f2 - c1_p_f1).norm();
     double norm2 = (c2_p_f2 - c2_p_f1).norm();
-    assert(norm1 > 0.0001);
 
-    return norm2 / norm1;
+    if (ok) {
+        return (norm1 > 0.0) ? (norm2 / norm1) : 1.0;
+    }
+
+    return 1.0;
+
+    // compute the relative_scale according to the distance (norm) ratio
+    // TODO assert(norm1 > 0.0001);
 }
 
 
@@ -101,7 +112,13 @@ Eigen::Vector3d triangulateWithRelativePoseUnitTranslation(const Eigen::Matrix3d
     Eigen::Matrix<double, 2, 3> Intrinsics_truc;
     Intrinsics_truc << kFocalLengthPX, 0, kPrinciplePointPX.x, 0, kFocalLengthPX, kPrinciplePointPX.y;
     // z1, z2 are two meas in consecutive frames for same feature
-    assert(abs(unit_c2_p_c1.norm() - 1.0) < 1e-6);
+
+    double eps = 1e-4;
+    // TODO assert(abs(unit_c2_p_c1.norm() - 1.0) < 1e-6);
+    if (fabs(unit_c2_p_c1.norm() - 1.0) < eps) {
+        return Eigen::Vector3d(0.0, 0.0, 0.0);
+    }
+
     Eigen::Matrix<double, 2, 3> A1;
     A1 = Intrinsics_truc;
     A1.col(2) -= z1;
