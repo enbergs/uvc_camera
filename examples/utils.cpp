@@ -119,7 +119,7 @@ std::vector<std::vector<Eigen::Vector2d>> GetLast3TrackFeatures(const std::vecto
     if (features_3_tracks.size() < 10) {
         std::cout << "feature number no many";
     }
-    assert(features_3_tracks.size() >= 3);
+    // assert(features_3_tracks.size() >= 3);
 
     return features_3_tracks;
 }

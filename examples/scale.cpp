@@ -1,4 +1,6 @@
+#include <opencv2/core/types.hpp>
 #include "scale.h"
+#include "camera_intrinsics.h"
 
 /* compute the median of a list of scale candidates */
 double computeRelativeScaleFromLast3Tracks(
@@ -97,7 +99,7 @@ Eigen::Vector3d triangulateWithRelativePoseUnitTranslation(const Eigen::Matrix3d
                                                            const Eigen::Vector2d &z2) {
 
     Eigen::Matrix<double, 2, 3> Intrinsics_truc;
-    Intrinsics_truc << 718.8560, 0, 607.1928, 0, 718.8560, 185.2157;
+    Intrinsics_truc << kFocalLengthPX, 0, kPrinciplePointPX.x, 0, kFocalLengthPX, kPrinciplePointPX.y;
     // z1, z2 are two meas in consecutive frames for same feature
     assert(abs(unit_c2_p_c1.norm() - 1.0) < 1e-6);
     Eigen::Matrix<double, 2, 3> A1;

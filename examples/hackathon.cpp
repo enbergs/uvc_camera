@@ -32,6 +32,7 @@
 
 #include "process_frame.h"
 #include "demo.h"
+#include "camera_intrinsics.h"
 
 using namespace cv;
 using namespace std;
@@ -110,8 +111,8 @@ typedef struct {
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
-double kFocalLengthPX = 718.8560;
-cv::Point2d kPrinciplePointPX(607.1928, 185.2157);
+double kFocalLengthPX = 1131.0;
+cv::Point2d kPrinciplePointPX(640.0, 360.0);
 
 void featureDetection(const Mat &img_1, vector<Point2f> &points1)	{   //uses FAST as of now, modify parameters as necessary
 	vector<KeyPoint> keypoints_1;

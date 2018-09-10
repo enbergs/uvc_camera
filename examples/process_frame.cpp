@@ -106,14 +106,12 @@ void ProcessFrame::processImage(const cv::Mat &img_curr) {
         double norm1 = unit_c2_p_c1_prev.norm();
         double norm2 = unit_c2_p_c1_curr.norm();
         double eps = 1.0e-5;
-        double scale_rel = 0.0;
-        if ((fabs(norm1 - 1.0) < eps) && (fabs(norm2 - 1.0) < eps)) {
-            scale_rel = computeRelativeScaleFromLast3Tracks(features_last_3_tracks, c2_R_c1_prev, unit_c2_p_c1_prev, c2_R_c1_curr, unit_c2_p_c1_curr);
+        bool are_we_ok = (fabs(norm1 - 1.0) < eps) && (fabs(norm2 - 1.0) < eps) && (features_last_3_tracks.size() >= 3);
+        if (are_we_ok) {
+            double scale_rel = computeRelativeScaleFromLast3Tracks(features_last_3_tracks, c2_R_c1_prev, unit_c2_p_c1_prev, c2_R_c1_curr, unit_c2_p_c1_curr);
             scale_abs_ *= scale_rel;
-        }
-        // done computing relative scale
-
-        std::cout << "Computed: scale_rel = " << scale_rel << ",scale_abs = " << scale_abs_<< std::endl;
+            std::cout << "Computed: scale_rel = " << scale_rel << ",scale_abs = " << scale_abs_<< std::endl;
+        } // done computing relative scale
     }
 
     // force the dynamics to be correct

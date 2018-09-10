@@ -6,12 +6,13 @@
 #include "scale.h"
 #include <queue>
 #include "circular_frame_info_array.h"
+#include "camera_intrinsics.h"
 
 class ProcessFrame {
 private:
     // todo: parse from calib.txt
-    const double kFocalLengthPX = 718.8560;
-    const cv::Point2d kPrinciplePointPX = cv::Point2d(607.1928, 185.2157);
+    const double kFocalLengthPX = ::kFocalLengthPX;
+    const cv::Point2d &kPrinciplePointPX = ::kPrinciplePointPX;
     const int kMinNumFeatures = 2000;
     const int kCircularArraySize = 5;
 
