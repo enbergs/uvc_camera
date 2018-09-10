@@ -46,6 +46,8 @@ using namespace std;
 void *camera_looper(void *ext);
 void *analysis_looper(void *ext);
 void *visualization_looper(void *ext);
+void *imu_daq_looper(void *ext);
+void *imu_ana_looper(void *ext);
 
 constexpr uint32_t InvalidCameraFrameIndex = 0xffffffff;
 constexpr size_t MaximumTypicalFeatures = 10000; /* TODO: the number of features we expect to see in typical image */
@@ -90,6 +92,12 @@ typedef struct {
 	std::string image_window_name;
 	cv::Mat global_rotation;
 	cv::Mat global_translation;
+	double ***acc_pool;
+	unsigned int acc_buff_size;
+	unsigned int acc_size;
+	unsigned int acc_head;
+	unsigned int acc_tail;
+	unsigned int acc_mask;
 } ThreadParams;
 
 // TODO - where to parse from calib.txt
@@ -104,6 +112,22 @@ void featureDetection(const Mat &img_1, vector<Point2f> &points1)	{   //uses FAS
 	KeyPoint::convert(keypoints_1, points1, vector<int>());
 }
 
+double distance(const std::vector<cv::Point2f> &v1, const std::vector<cv::Point2f> &v2) {
+	size_t n = v1.size();
+	if ((n == 0) || (n != v2.size())) { return -1.0; }
+	std::vector<cv::Point2f>::const_iterator it_v1 = v1.begin(), v1_last = v1.end();
+	std::vector<cv::Point2f>::const_iterator it_v2 = v2.begin();
+	double acc = 0.0;
+	for (; it_v1 != v1_last; ++it_v1, ++it_v2) {
+		double x1_prev = it_v1->x, x2_prev = it_v2->x;
+		double y1_prev = it_v1->y, y2_prev = it_v2->y;
+		double diff_x = x2_prev - x1_prev;
+		double diff_y = y2_prev - y1_prev;
+		acc = acc + (diff_x * diff_x + diff_y * diff_y);
+	}
+	return acc / n;
+}
+
 void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &prev_eigen_features, vector<Point2f> &prev_tracked_features, vector<Point2f> &next_tracked_features)	{
 	vector<float> err;
 	Size winSize = Size(21, 21);
@@ -113,6 +137,14 @@ void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &pr
 
 	calcOpticalFlowPyrLK(img1, img2, prev_eigen_features, points, status, err, winSize, 3, termcrit, 0, 0.001);
 
+	double a = distance(prev_eigen_features, points);
+	printf(">>> size of feature set = %zu. distance = %f\n", prev_eigen_features.size(), a);
+	int n_asterisks = floor(a / 10000.0);
+	for (int i = 0; i < n_asterisks; ++i) {
+		printf("*");
+	}
+	printf("\n");
+
 	size_t n = status.size();
 	prev_tracked_features.clear();
 	prev_tracked_features.reserve(n);
@@ -120,8 +152,6 @@ void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &pr
 	next_tracked_features.reserve(n);
 	std::vector<uchar>::const_iterator it_status, last_status = status.end();
 	std::vector<cv::Point2f>::const_iterator it_point = points.begin(); /* points and status have same size */
-	// std::vector<cv::Point2f>::const_iterator it_prev = prev_tracked_features.begin(); /* points and status have same size */
-	// std::vector<cv::Point2f>::const_iterator it_next = next().begin(); /* points and status have same size */
 	if (points.size() != n) { printf("mismatch between points and status\n"); return; }
 
 	for (it_status = status.begin(); it_status != last_status; ++it_status, ++it_point) {
@@ -131,29 +161,6 @@ void featureTracking(const Mat &img1, const Mat &img2, const vector<Point2f> &pr
 			next_tracked_features.push_back(*it_point);
 		}
 	}
-
-#if 0
-	size_t n_1 = points1.size();
-	size_t n_2 = points2.size();
-	size_t n_s = status.size();
-
-	printf("the ns are %zu, %zu, %zu\n", n_1, n_2, n_s);
-
-	//getting rid of points for which the KLT tracking failed or those who have gone outside the frame
-	int indexCorrection = 0;
-	for( int i=0; i<status.size(); i++)
-	{  Point2f pt = points2.at(i- indexCorrection);
-		if ((status.at(i) == 0)||(pt.x<0)||(pt.y<0))	{
-			if((pt.x<0)||(pt.y<0))	{
-				status.at(i) = 0;
-			}
-			points1.erase (points1.begin() + (i - indexCorrection));
-			points2.erase (points2.begin() + (i - indexCorrection));
-			indexCorrection++;
-		}
-	}
-#endif
-
 }
 
 int main(int argc, char **argv) {
@@ -189,7 +196,6 @@ int main(int argc, char **argv) {
 		else if(strcmp(argv[i], "-o") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "--output") == 0) ofile = argv[++i];
 		else if(strcmp(argv[i], "-display") == 0) display = true; 
-//		else if(strcmp(argv[i], "-output_buffers") == 0) n_output_buffers = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-fps") == 0) fps = atoi(argv[++i]);
 		else if(strcmp(argv[i], "-reverse") == 0) reverse_image = true;
 		else if(strcmp(argv[i], "-vga") == 0) {
@@ -207,9 +213,6 @@ int main(int argc, char **argv) {
 	UvcCamera *camera = new UvcCamera(device, width, height, logger);
 	camera->open();
 	camera->frame_timeout_ms = 1000;
-//	UvcCamera::FrameData frame_data;
-//	uint32_t *bgr_data = new uint32_t [camera->width * camera->height];
-//	uint8_t *y_data = new uint8_t [camera->width * camera->height];
 
 	ThreadParams *thread_params = new ThreadParams;
 	thread_params->camera = camera;
@@ -230,46 +233,43 @@ int main(int argc, char **argv) {
 	int err;
 	uint32_t cpu_mask = 1;
 	pthread_t camera_thread_id, analysis_thread_id, visualization_thread_id;
+	pthread_t imu_daq_thread_id, imu_ana_thread_id;
     cpu_set_t cpu_set;
 
     thread_params->run = &run;
 
     err = pthread_create(&camera_thread_id, NULL, camera_looper, thread_params); /* create thread */
-    cpu_mask = 1;
+    cpu_mask = 0x01;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(camera_thread_id, sizeof(cpu_set_t), &cpu_set);
 
     err = pthread_create(&analysis_thread_id, NULL, analysis_looper, thread_params); /* create thread */
-    cpu_mask = 2;
+    cpu_mask = 0x02;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(analysis_thread_id, sizeof(cpu_set_t), &cpu_set);
 
     err = pthread_create(&visualization_thread_id, NULL, visualization_looper, thread_params); /* create thread */
-    cpu_mask = 4;
+    cpu_mask = 0x04;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(visualization_thread_id, sizeof(cpu_set_t), &cpu_set);
 
+    err = pthread_create(&imu_daq_thread_id, NULL, imu_daq_looper, thread_params); /* create thread */
+    cpu_mask = 0x08;
+    CPU_ZERO(&cpu_set);
+    for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
+    err = pthread_setaffinity_np(imu_daq_thread_id, sizeof(cpu_set_t), &cpu_set);
+
+    err = pthread_create(&imu_ana_thread_id, NULL, imu_ana_looper, thread_params); /* create thread */
+    cpu_mask = 0x10;
+    CPU_ZERO(&cpu_set);
+    for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
+    err = pthread_setaffinity_np(imu_ana_thread_id, sizeof(cpu_set_t), &cpu_set);
+
     while (run) {
         usleep(100000);
-//		uint8_t *src;
-//		const time_t frame_timeout_ms = 1000;
-//		int uvc_frame_index = camera->getFrame(&frame_data);
-//		if (uvc_frame_index >= 0) {
-//			quick_YUV422_to_RGBA(frame_data.payload, bgr_data, width, height);
-//			yuv422_to_y(frame_data.payload, y_data, width, height);
-//			// YUV422_to_RGBA(frame_data.payload, (uint8_t *) bgr_frame, width, height); /* TODO this also works but quick version is ... */
-//			// Mat bgr_frame(height, width, CV_8UC4, bgr_frame);
-//			// imshow(window_name, bgr_frame);
-//			Mat y_frame(height, width, CV_8UC1, y_data);
-//			imshow(window_name, y_frame);
-//			waitKey(30);
-//			camera->releaseFrame(frame_data.index);
-//		} else if (uvc_frame_index < 0) {
-//			printf("error\n");
-//		}
 	}
 
 	camera->close();
@@ -376,11 +376,11 @@ void *analysis_looper(void *ext) {
         const cv::Mat &previous_image = *prev_frame_data->mat;
 
 		size_t n_previous_features = prev_frame_data->eigen_features->size(), n_current_features = frame_data->eigen_features->size();
-		printf("numbers of features = %zu(%d) / %zu(%d)\n", n_previous_features, previous_index, n_current_features, thread_params->frame_data_tail);
+		// printf("numbers of features = %zu(%d) / %zu(%d)\n", n_previous_features, previous_index, n_current_features, thread_params->frame_data_tail);
 
 		if (n_frames > 1) { /* we need at least two frames to get the pipeline working */
             cv::Mat mask, relative_rotation, relative_translation;
-            printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
+            // printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
             bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
 				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
             if (stand_chance) {
@@ -460,4 +460,42 @@ void *visualization_looper(void *ext) {
         }
     }
     return NULL;
+}
+
+void *imu_daq_looper(void *ext) {
+#if 0
+    ThreadParams *thread_params = (ThreadParams *) ext;
+    thread_params->acc_buff_size = 128; /* 128 samples in each buff */
+    thread_params->acc_size = 64;
+    thread_params->acc_pool = new double ** [thread_params->acc_size];
+    for (unsigned int i = 0; i < thread_params->acc_size; ++i) {
+        thread_params->acc_pool[i] = new double * []
+    }
+
+
+    thread_params->acc_pool = new double ** [thread_params->acc_buff_size];
+    while (*thread_params->run != 0) {
+        usleep(1000);
+    }
+#endif
+}
+
+void *imu_ana_looper(void *ext) {
+#if 0
+    ThreadParams *thread_params = (ThreadParams *) ext;
+    double *v_new, *v_old;
+    double v0[3], v1[3];
+    v_new = v0;
+    v_old = v1;
+    while (*thread_params->run != 0) {
+        usleep(1000);
+        unsigned int n = 0;
+        double *vp = v_old;
+        v_old = v_new;
+        v_new = vp;
+        // v_new[0] = 0.5 * accX;
+        for (unsigned int i = 0; i < n; ++i) {
+        }
+    }
+#endif
 }
