@@ -15,7 +15,9 @@
 #include <linux/videodev2.h>
 #include <linux/usb/video.h>
 #include <linux/uvcvideo.h>
+#include <inttypes.h>
 
+#include <chrono>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -108,7 +110,24 @@ typedef struct {
 	unsigned int trajectory_image_width;
 	ProcessFrame *process_frame;
 	Demo *demo;
-} ThreadParams;
+} System;
+
+/* elapsed time in microseconds */
+uint64_t elapsedTime(timespec &start, timespec &end)
+{
+    constexpr uint64_t one_billion = 1000000000;
+    timespec temp;
+    if ((end.tv_nsec-start.tv_nsec) < 0) {
+        temp.tv_sec = end.tv_sec - start.tv_sec-1;
+        temp.tv_nsec = one_billion + end.tv_nsec-start.tv_nsec;
+    } else {
+        temp.tv_sec = end.tv_sec - start.tv_sec;
+        temp.tv_nsec = end.tv_nsec - start.tv_nsec;
+    }
+    uint64_t diff = temp.tv_sec;
+    diff = one_billion + temp.tv_nsec;
+    return diff / 1000;
+}
 
 // TODO - where to parse from calib.txt
 double kFocalLengthPX = 1131.0;
@@ -226,44 +245,44 @@ int main(int argc, char **argv) {
 	Demo demo;
 	demo.initWindows(display_factor);
 
-	ThreadParams *thread_params = new ThreadParams;
-	thread_params->reverse_image = reverse_image;
-	thread_params->image_window_name = "main";
-	thread_params->global_rotation = cv::Mat::eye(3, 3, CV_64FC1);
-	thread_params->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
-	thread_params->trajectory_image_height = 1400;
-	thread_params->trajectory_image_width = 1200;
-	thread_params->process_frame = &processFrame;
-	thread_params->demo = &demo;
+	System *sys = new System;
+	sys->reverse_image = reverse_image;
+	sys->image_window_name = "main";
+	sys->global_rotation = cv::Mat::eye(3, 3, CV_64FC1);
+	sys->global_translation = cv::Mat::zeros(3, 1, CV_64FC1);
+	sys->trajectory_image_height = 1400;
+	sys->trajectory_image_width = 1200;
+	sys->process_frame = &processFrame;
+	sys->demo = &demo;
 
 	if (ifile.length() != 0) {
 		device = ifile;
-		thread_params->image_height = 370;
-		thread_params->image_width = 1226;
+		sys->image_height = 370;
+		sys->image_width = 1226;
 		height = 0;
 		debug_mode = true;
 	} else {
-		thread_params->image_height = height;
-		thread_params->image_width = width;
+		sys->image_height = height;
+		sys->image_width = width;
 		debug_mode = false;
 	}
 
 	UvcCamera *camera = new UvcCamera(device.c_str(), width, height, logger);
 	camera->open();
 	camera->frame_timeout_ms = 1000;
-	thread_params->camera = camera;
+	sys->camera = camera;
 
 	/* sync to camera */
 	if (debug_mode == false) {
-		thread_params->image_width = camera->width;
-		thread_params->image_height = camera->height;
+		sys->image_width = camera->width;
+		sys->image_height = camera->height;
 	}
-	width = thread_params->image_width; /* TODO get rid of */
-	height = thread_params->image_height; /* TODO get rid of */
-	thread_params->trajectory_window_name = "traj";
-	thread_params->trajectory_mat = cv::Mat(thread_params->trajectory_image_height, thread_params->trajectory_image_width, CV_8UC3);
-//	std::string window_name(thread_params->image_window_name.c_str());
-//	std::string window_name(thread_params->trajectory_window_name.c_str());
+	width = sys->image_width; /* TODO get rid of */
+	height = sys->image_height; /* TODO get rid of */
+	sys->trajectory_window_name = "traj";
+	sys->trajectory_mat = cv::Mat(sys->trajectory_image_height, sys->trajectory_image_width, CV_8UC3);
+//	std::string window_name(sys->image_window_name.c_str());
+//	std::string window_name(sys->trajectory_window_name.c_str());
 	initialize_UYVY_to_RGBA();
 
 	int err;
@@ -272,33 +291,33 @@ int main(int argc, char **argv) {
 	pthread_t imu_daq_thread_id, imu_ana_thread_id;
     cpu_set_t cpu_set;
 
-    thread_params->run = &run;
+    sys->run = &run;
 
-    err = pthread_create(&camera_thread_id, NULL, camera_looper, thread_params); /* create thread */
+    err = pthread_create(&camera_thread_id, NULL, camera_looper, sys); /* create thread */
     cpu_mask = 0x01;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(camera_thread_id, sizeof(cpu_set_t), &cpu_set);
 
-    err = pthread_create(&analysis_thread_id, NULL, analysis_looper, thread_params); /* create thread */
+    err = pthread_create(&analysis_thread_id, NULL, analysis_looper, sys); /* create thread */
     cpu_mask = 0x02;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(analysis_thread_id, sizeof(cpu_set_t), &cpu_set);
 
-    err = pthread_create(&visualization_thread_id, NULL, visualization_looper, thread_params); /* create thread */
+    err = pthread_create(&visualization_thread_id, NULL, visualization_looper, sys); /* create thread */
     cpu_mask = 0x04;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(visualization_thread_id, sizeof(cpu_set_t), &cpu_set);
 
-    err = pthread_create(&imu_daq_thread_id, NULL, imu_daq_looper, thread_params); /* create thread */
+    err = pthread_create(&imu_daq_thread_id, NULL, imu_daq_looper, sys); /* create thread */
     cpu_mask = 0x08;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
     err = pthread_setaffinity_np(imu_daq_thread_id, sizeof(cpu_set_t), &cpu_set);
 
-    err = pthread_create(&imu_ana_thread_id, NULL, imu_ana_looper, thread_params); /* create thread */
+    err = pthread_create(&imu_ana_thread_id, NULL, imu_ana_looper, sys); /* create thread */
     cpu_mask = 0x10;
     CPU_ZERO(&cpu_set);
     for (int i = 0; i < 32; ++i) { if (cpu_mask & (1 << i)) CPU_SET(i, &cpu_set); }
@@ -315,7 +334,7 @@ int main(int argc, char **argv) {
 }
 
 void *camera_looper(void *ext) {
-	ThreadParams *thread_params = (ThreadParams *) ext;
+	System *thread_params = (System *) ext;
 	UvcCamera *camera = thread_params->camera;
 	unsigned long int n_pixels = thread_params->image_width * thread_params->image_height;
 
@@ -404,7 +423,7 @@ void *camera_looper(void *ext) {
 }
 
 void *analysis_looper(void *ext) {
-	ThreadParams *thread_params = (ThreadParams *) ext;
+	System *thread_params = (System *) ext;
 	unsigned int n_frames = 0;
     while (*thread_params->run != 0) {
         unsigned int room = (thread_params->frame_data_head - thread_params->frame_data_tail) % thread_params->frame_data_mask;
@@ -414,6 +433,7 @@ void *analysis_looper(void *ext) {
         FrameData *frame_data = thread_params->frame_data_pool[thread_params->frame_data_tail];
         const cv::Mat &current_image = *frame_data->mat;
 
+#if 0
 		// cv::Mat mat(thread_params->image_height, thread_params->image_width, CV_8UC1, frame_data->frame_data->payload);
 		if (n_frames == 0) {
 			printf("thread_params->process_frame->init(mat)\n");
@@ -422,13 +442,29 @@ void *analysis_looper(void *ext) {
 			printf("thread_params->process_frame->processImage(mat)\n");
 			thread_params->process_frame->processImage(current_image);
 		}
+#endif
 
 		++n_frames;
 
-#if 0
+#if 1
         // TODO necessary? frame_data->eigen_features->clear(); /* reset vector */
         // TODO necessary? frame_data->eigen_features->reserve(); /* reserve space in vector */
-		featureDetection(current_image, *frame_data->eigen_features);
+
+        /* extract features from frame */
+        timespec time0, time1, time2, time3;
+        std::chrono::high_resolution_clock::time_point t0, t1, t2, t3;
+
+        t0 = std::chrono::high_resolution_clock::now();
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time0);
+
+        featureDetection(current_image, *frame_data->eigen_features);
+
+		t1 = std::chrono::high_resolution_clock::now();
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
+        uint64_t dtime = elapsedTime(time0, time1);
+        uint64_t dt = (t1 - t0).count() / 1000;
+        printf("featureDetection() time = %" PRIu64 " vs %" PRIu64 "\n", dtime, dt);
+
 		*frame_data->track_fwd_features = *frame_data->eigen_features;
 
         /* fetch previous frame */
@@ -444,14 +480,37 @@ void *analysis_looper(void *ext) {
             // printf("feature set sizes = %zu/%zu\n", prev_frame_data->eigen_features->size(), frame_data->eigen_features->size());
             bool stand_chance = (frame_data->eigen_features->size() >= MinimumFeaturesForTracking) &&
 				(prev_frame_data->eigen_features->size() >= MinimumFeaturesForTracking);
-            stand_chance = false; /* TODO */
             if (stand_chance) {
 				std::vector<cv::Point2f> *prev_track = prev_frame_data->track_fwd_features; /* use track_features to replicate current functionality */
 				std::vector<cv::Point2f> *next_track = frame_data->track_rev_features;
 				// size_t n1 = prev_track->size(), n2 = prev_frame_data->eigen_features->size(), n3 = prev_frame_data->track_fwd_features->size(), n4 = frame_data->track_fwd_features->size();
+
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time0);
+                t0 = std::chrono::high_resolution_clock::now();
+
 				featureTracking(previous_image, current_image, *frame_data->eigen_features, *prev_track, *next_track);
+
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time1);
+                t1 = std::chrono::high_resolution_clock::now();
+                dtime = elapsedTime(time0, time1);
+                dt = (t1 - t0).count() / 1000;
+                printf("featureTracking() time = %" PRIu64 " vs %" PRIu64 "\n", dtime, dt);
+
                 cv::Mat E = findEssentialMat(*prev_track, *next_track, kFocalLengthPX, kPrinciplePointPX, cv::RANSAC, 0.999, 1.0, mask);
+
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time2);
+                t2 = std::chrono::high_resolution_clock::now();
+                dtime = elapsedTime(time1, time2);
+                dt = (t2 - t1).count() / 1000;
+                printf("findEssentialMat() time = %" PRIu64 " vs %" PRIu64 "\n", dtime, dt);
+
                 recoverPose(E, *prev_track, *next_track, relative_rotation, relative_translation, kFocalLengthPX, kPrinciplePointPX, mask);
+
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &time3);
+                t3 = std::chrono::high_resolution_clock::now();
+                dtime = elapsedTime(time2, time3);
+                dt = (t3 - t2).count() / 1000;
+                printf("recoverPose() time = %" PRIu64 " vs %" PRIu64 "\n", dtime, dt);
 
 #if 0
 
@@ -495,7 +554,7 @@ void *analysis_looper(void *ext) {
 }
 
 void *visualization_looper(void *ext) {
-    ThreadParams *thread_params = (ThreadParams *) ext;
+    System *thread_params = (System *) ext;
     thread_params->display_busy = false;
     int n_frames = 0;
     while (*thread_params->run != 0) {
@@ -503,11 +562,11 @@ void *visualization_looper(void *ext) {
 
         	printf("visualization %d\n", n_frames);
 
-        	if (n_frames > 0 && thread_params->process_frame->initialized_bool_ && thread_params->process_frame->ready_for_scale_) {
+        	if (n_frames > 0) {
 				FrameData *frame_data = thread_params->frame_data_pool[thread_params->display_index];
 				const cv::Mat image = *frame_data->mat;
 
-#if 0
+#if 1
 				std::vector<cv::Point2f>::const_iterator it_feat, it_last = frame_data->eigen_features->end();
 				for (it_feat = frame_data->eigen_features->begin(); it_feat != it_last; ++it_feat) {
 					cv::circle(image, *it_feat, 2, cv::Scalar(255, 255, 255), 1);
@@ -515,19 +574,17 @@ void *visualization_looper(void *ext) {
 				imshow(thread_params->image_window_name, image);
 #endif
 
-				cv::Mat t_f_curr = thread_params->process_frame->getTopFrameInfo(1).g_t;
-				cv::Mat t_f_prev = thread_params->process_frame->getTopFrameInfo(2).g_t;
+#if 1
+				if (thread_params->process_frame->initialized_bool_ && thread_params->process_frame->ready_for_scale_) {
+                    cv::Mat t_f_curr = thread_params->process_frame->getTopFrameInfo(1).g_t;
+                    cv::Mat t_f_prev = thread_params->process_frame->getTopFrameInfo(2).g_t;
 
-				thread_params->demo->showImage(image);
-				thread_params->demo->showTraj(t_f_curr, t_f_prev);
+                    thread_params->demo->showImage(image);
+                    thread_params->demo->showTraj(t_f_curr, t_f_prev);
+                }
+#endif
 
-				char key = cvWaitKey(10);
-
-				if (key == 27) {
-					break;
-				}
-
-#if 0
+#if 1
 				cv::Point2i center;
 
 				double x = thread_params->global_translation.at<double>(0);
@@ -540,9 +597,13 @@ void *visualization_looper(void *ext) {
 				cv::circle(thread_params->trajectory_mat, center, 4, cv::Scalar(255, 0, 0), 1);
 
 				imshow(thread_params->trajectory_window_name, thread_params->trajectory_mat);
-				cv::waitKey(30);
 #endif
-			}
+                char key = cvWaitKey(10);
+                if (key == 27) {
+                    break;
+                }
+
+            }
 			++n_frames;
             thread_params->display_busy = false;
         }
@@ -552,7 +613,7 @@ void *visualization_looper(void *ext) {
 
 void *imu_daq_looper(void *ext) {
 #if 0
-    ThreadParams *thread_params = (ThreadParams *) ext;
+    System *thread_params = (System *) ext;
     thread_params->acc_buff_size = 128; /* 128 samples in each buff */
     thread_params->acc_size = 64;
     thread_params->acc_pool = new double ** [thread_params->acc_size];
@@ -570,7 +631,7 @@ void *imu_daq_looper(void *ext) {
 
 void *imu_ana_looper(void *ext) {
 #if 0
-    ThreadParams *thread_params = (ThreadParams *) ext;
+    System *thread_params = (System *) ext;
     double *v_new, *v_old;
     double v0[3], v1[3];
     v_new = v0;
